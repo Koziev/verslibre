@@ -100,12 +100,13 @@ def extract_spans(t5_output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Verslibre generator v.2')
     parser.add_argument('--topic', type=str)
+    parser.add_argument('--tmp_dir', default='../../tmp', type=str)
+    parser.add_argument('--models_dir', default='../../models', type=str)
 
     args = parser.parse_args()
     topic = args.topic
-
-    tmp_dir = '../../tmp'
-    models_dir = '../../models'
+    tmp_dir = args.tmp_dir
+    models_dir = args.models_dir
 
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")

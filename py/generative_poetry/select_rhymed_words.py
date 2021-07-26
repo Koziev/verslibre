@@ -121,7 +121,7 @@ class RhymeSelector:
                     score = 1.0
                     tagsets2 = list(self.gren[word2])
                     pox2 = set(tagset.split(' ')[0] for tagset in tagsets2)
-                    if 'ПРЕДЛОГ' in in pox2:
+                    if 'ПРЕДЛОГ' in pox2:
                         # Предлоги (всякие НАД и ПОД) не могут быть последними словами в строке
                         continue
 
