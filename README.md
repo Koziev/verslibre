@@ -6,6 +6,8 @@
 ![общая схема генерации](./generation_schema.png)
 
 
+Подробное описание всего пайплайна можно [прочитать тут](https://kelijah.livejournal.com/288594.html).
+
 Бинарные файлы моделей из-за своего большого размера не выложены, но доступны
 в докер-образе.
 
@@ -41,5 +43,22 @@ sudo docker run -it verslibre:latest
 И я, как будто, был счастлив с тобой
 И чего-то, чего-то хотел
 ```
+
+## Обучающие данные
+
+В подкаталоге [tmp](https://github.com/Koziev/verslibre/tmp) лежат файлы с частью обучающих данных:
+
+[poetry_corpus.txt](https://github.com/Koziev/verslibre/tmp/poetry_corpus.txt) - корпус отфильтрованных четверостиший, символ | в качестве разделителя строк; используется для дотренировки модели ruT5.  
+[poem_generator_dataset.dat](https://github.com/Koziev/verslibre/tmp/poem_generator_dataset.dat) - датасет для тренировки ruGPT, выдающей текст стиха по теме (ключевому словосочетанию).  
+[captions_generator_rugpt.dat](https://github.com/Koziev/verslibre/tmp/captions_generator_rugpt.dat) - датасет для тренировки ruGPT, генерирующей заголовок стиха по его содержимому.  
+
+Описание процесса подготовки обучающего корпуса можно [найти здесь](https://kelijah.livejournal.com/288594.html).
+
+
+
+
+
+
+
 
 
