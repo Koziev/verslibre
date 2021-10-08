@@ -16,11 +16,19 @@ RUN pip install --upgrade setuptools
 RUN pip install torch
 RUN pip install tensorflow
 RUN pip install transformers
+RUN pip install coloredlogs
+RUN pip install python-telegram-bot
 
 
 RUN pip install git+https://github.com/Koziev/rutokenizer
 
 RUN apt-get clean
+
+RUN mkdir -p /text_generator/tmp
+
+
+WORKDIR /text_generator/py
+COPY ./py/antiplagiat.py ./
 
 WORKDIR /text_generator/py/generative_poetry
 COPY ./py/generative_poetry/rugpt_generator.py ./
@@ -29,6 +37,7 @@ COPY ./py/generative_poetry/run_haiku_generator.py ./
 
 WORKDIR /text_generator/scripts/
 COPY ./scripts/haiku_console.sh ./
+COPY ./scripts/haiku_tg.sh ./
 
 WORKDIR /text_generator/models/rugpt_haiku_generator
 COPY ./models/rugpt_haiku_generator/* ./
@@ -37,6 +46,6 @@ WORKDIR /text_generator/models/rugpt_caption_generator
 COPY ./models/rugpt_caption_generator/* ./
 
 WORKDIR /text_generator/py/generative_poetry
-CMD "/text_generator/scripts/haiku_console.sh"
+CMD "/text_generator/scripts/haiku_tg.sh"
 
 WORKDIR /text_generator
