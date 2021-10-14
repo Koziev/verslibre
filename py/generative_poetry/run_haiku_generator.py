@@ -1,11 +1,13 @@
 """
 Модель для генерации хайку
 """
-
+import collections
 import io
 import os
 import argparse
 import logging.handlers
+import random
+import itertools
 
 import coloredlogs
 import numpy as np
@@ -62,12 +64,6 @@ def get_user_id(update: Update) -> str:
     return user_id
 
 
-def start(update, context) -> None:
-    user_id = get_user_id(update)
-    logging.debug('Entering START callback with user_id=%s', user_id)
-    context.bot.send_message(chat_id=update.message.chat_id, text='Привет, {}!\nЗадавайте тему в виде словосочетания из прилагательного и существительного'.format(update.message.from_user.full_name))
-    logging.debug('Leaving START callback with user_id=%s', user_id)
-
 
 LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
@@ -75,6 +71,111 @@ MORE = 'Еще...'
 
 last_user_poems = dict()
 last_user_poem = dict()
+user_seeds = collections.defaultdict(set)
+
+
+a_m=['зеленый', 'тусклый', 'шустрый', 'обворожительный', 'неожиданный', 'молодой', 'снисходительный',
+     'мудрый', 'безрассудный', 'застенчивый', 'вальяжный', 'сообразительный', 'воодушевленный',
+     'веселый', 'семейный', 'одинокий', 'незадачливый', 'агрессивный', 'настойчивый', 'толерантный',
+     'февральский', 'сентябрьский', 'ежедневный', 'пятничный', 'доброкачественный', 'кожаный',
+     'заунывный', 'занудный', 'звёздный', 'лунный', 'добрососедский', 'породистый']
+
+n_m=['дом', 'аванс', 'ковид', 'друг', 'идиот', 'ребенок', 'воробей',
+'лист', 'сон', 'день', 'идиот', 'дуб', 'тополь', 'зуб', 'дьявол', 'бог',
+'кашель', 'кошелек', 'путь', 'тупик', 'бродяга', 'интеллект', 'совет', 'тупик', 'ктулху',
+'зачёс', 'маникюр', 'понедельник', 'вторник', 'четверг', 'январь', 'февраль',
+'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь',
+'декабрь', 'микроб', 'кузнечик', 'вурдалак', 'ухряб', 'кабанчик', 'стон', 'вскрик',
+'самурай', 'сабантуй']
+
+
+a_f=['престарелая', 'угрюмая', 'очаровательная', 'снисходительная', 'воодушевленная', 'щастенчивая', 'привлекательная',
+     'мрачная', 'волнительная', 'оранжевая', 'доверительная', 'родная', 'замерзшая', 'уставшая',
+     'коренная', 'кокетливая', 'игривая', 'полуночное', 'апрельская', 'октябрьская', 'вечерняя', 'субботняя',
+     'зловредная', 'силиконовая', 'солнечная', 'вечнозелёная', 'сапфировая', 'храбрая', 'колченогая', 'суровая',
+     'зимняя', 'космическая', 'лживая', 'послеобеденная', 'голубоглазая', 'хромая', 'беспородная']
+
+n_f=['вакцина', 'прививка', 'девушка', 'женщина', 'идея', 'ночь', 'голова',
+'дурочка', 'рябина', 'ива', 'чайка', 'смерть', 'жизнь', 'судьба', 'рифма',
+'кровь', 'дорога', 'могила', 'еда', 'гроза', 'осень', 'зима', 'весна',
+'прическа', 'беседа', 'рекомендация', 'коза', 'подружка', 'совесть',
+'ресничка', 'расческа', 'пятница', 'суббота', 'кракозябра', 'оттепель', 'капель',
+'депрессия', 'инфляция', 'опухоль']
+
+
+a_n = ['обезвоженное', 'счастливое', 'последнее', 'новое', 'фиолетовое', 'мерцающее', 'снисходительное',
+       'кредитное', 'культурное', 'иностранное', 'ночное', 'утреннее', 'злорадное', 'игривое', 'обеденное',
+       'синеглазое', 'июльское', 'декабрьское', 'утреннее', 'воскресное', 'полноводное', 'застенчивое',
+       'райское']
+n_n=['утро', 'похмелье', 'зелье', 'лекарство', 'окно', 'чудо',
+'явление', 'марево', 'зарево', 'счастье', 'лето', 'очарование', 'вдохновение', 'воскресенье',
+'зазеркалье', 'харакири', 'анимэ', 'послевкусие', 'пробуждение', 'смятение'
+]
+
+
+a_p=['железные', 'острые', 'последние', 'верные', 'ржавые', 'кургузые', 'простые', 'забытые', 'семейные', 'вечные',
+     'сладострастные', 'опухшие', 'январские', 'мартовские', 'алюминиевые', 'запредельные', 'сумасбродные',
+     'непокорные', 'первородные', 'запредельные', 'ошалевшие']
+n_p=['пассатижи', 'ножницы', 'дожди', 'деньги', 'друзья', 'долги', 'слезы',
+'мысли', 'люди', 'листья', 'березы', 'волосы', 'воробьи', 'чайки', 'клочки',
+'птицы', 'заморозки', 'замыслы']
+
+
+n_gen = ['судьбы', 'страданий', 'любви', 'срасти', 'раздумий', 'одиночества', 'ночи', 'дьявола']
+
+
+def generate_seeds(user_id):
+    seeds = set()
+    for _ in range(100):
+        template = random.choice('an_m an_f an_n an_p n_n'.split())
+        seed = None
+        if template == 'an_m':
+            a = random.choice(a_m)
+            n = random.choice(n_m)
+            seed = a + ' ' + n
+        elif template == 'an_f':
+            a = random.choice(a_f)
+            n = random.choice(n_f)
+            seed = a + ' ' + n
+        elif template == 'an_n':
+            a = random.choice(a_n)
+            n = random.choice(n_n)
+            seed = a + ' ' + n
+        elif template == 'an_p':
+            a = random.choice(a_p)
+            n = random.choice(n_p)
+            seed = a + ' ' + n
+        elif template == 'n_n':
+            n = random.choice(list(itertools.chain(n_m, n_f, n_n, n_p)))
+            n2 = random.choice(n_gen)
+            seed = n + ' ' + n2
+
+        if seed and seed not in user_seeds[user_id]:
+            seeds.add(seed)
+            user_seeds[user_id].add(seed)
+            if len(seeds) >= 3:
+                break
+
+    return list(seeds)
+
+
+def start(update, context) -> None:
+    user_id = get_user_id(update)
+    logging.debug('Entering START callback with user_id=%s', user_id)
+
+    seeds = generate_seeds(user_id)
+
+    keyboard = [seeds]
+    reply_markup = ReplyKeyboardMarkup(keyboard,
+                                       one_time_keyboard=True,
+                                       resize_keyboard=True,
+                                       per_user=True)
+
+    context.bot.send_message(chat_id=update.message.chat_id,
+                             text='Привет, {}!\nЗадавайте тему в виде словосочетания из прилагательного и существительного.\nЛибо выберите готовую тему из предложенных'.format(update.message.from_user.full_name),
+                             reply_markup=reply_markup)
+    logging.debug('Leaving START callback with user_id=%s', user_id)
+
 
 def echo(update, context):
     # update.chat.first_name
@@ -91,7 +192,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE]]
+                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -163,18 +264,29 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE]]
+                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
                                                per_user=True)
 
-            context.bot.send_message(chat_id=update.message.chat_id, text=last_user_poem[user_id][2], reply_markup=reply_markup)
+            context.bot.send_message(chat_id=update.message.chat_id,
+                                     text=last_user_poem[user_id][2],
+                                     reply_markup=reply_markup)
         else:
-            context.bot.send_message(chat_id=update.message.chat_id, text='Что-то не получается сочинить :(\nЗадайте другую тему, пожалуйста')
+            keyboard = [generate_seeds(user_id)]
+            reply_markup = ReplyKeyboardMarkup(keyboard,
+                                               one_time_keyboard=True,
+                                               resize_keyboard=True,
+                                               per_user=True)
+
+            context.bot.send_message(chat_id=update.message.chat_id,
+                                     text='Что-то не получается сочинить :(\nЗадайте другую тему, пожалуйста',
+                                     reply_markup=reply_markup)
 
     except Exception as ex:
+        logging.error('Error in "echo"')
         logging.error(ex)  # sys.exc_info()[0]
 
 
