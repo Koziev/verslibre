@@ -52,7 +52,7 @@ class Accents:
 
         # однозначаная ёфикация
         path = os.path.join(data_dir, 'solarix_yo.txt')
-        logging.info(u'Loading words with ё from "%s"', path)
+        logging.info('Loading words with ё from "%s"', path)
         self.yo_words = dict()
         with io.open(path, 'r', encoding='utf-8') as rdr:
             for line in rdr:
@@ -144,6 +144,18 @@ class Accents:
                     nword = self.sanitize_word(word)
                     if nword not in self.word_accents_dict:
                         self.word_accents_dict[nword] = a
+
+        with io.open(os.path.join(data_dir, 'true_accents.txt'), 'r', encoding='utf-8') as rdr:
+            for line in rdr:
+                word = line.strip()
+                if word:
+                    nword = self.sanitize_word(word)
+                    if nword in self.ambiguous_accents:
+                        del self.ambiguous_accents[nword]
+                    accent_char = re.search('([АЕЁИОУЭЮЯ])', word).groups(0)[0]
+                    accent_pos = word.index(accent_char)
+                    nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False) + 1
+                    self.word_accents_dict[nword] = nb_vowels_before
 
         logging.info('%d items in word_accents_dict', len(self.word_accents_dict))
 
@@ -286,7 +298,7 @@ class Accents:
 
         return s
 
-    def get_vowel_count(self, word0):
+    def get_vowel_count(self, word0, abbrevs=True):
         word = self.sanitize_word(word0)
         vowels = "уеыаоэёяию"
         vowel_count = 0
@@ -295,7 +307,7 @@ class Accents:
             if ch in vowels:
                 vowel_count += 1
 
-        if vowel_count == 0 and len(word0) > 1:
+        if vowel_count == 0 and len(word0) > 1 and abbrevs:
             # аббревиатуры из согласных: ГКЧП
             # Считаем, что там число гласных=длине: Гэ-Ка-Че-Пэ
             return len(word0)
@@ -790,6 +802,9 @@ if __name__ == '__main__':
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
 
+    i = accents.get_accent('голубое')
+    assert(i == 3)
+
     i = accents.get_accent('детям')
     assert(i == 1)
 
@@ -959,7 +974,7 @@ if __name__ == '__main__':
     assert(i2 == 2)
 
     print('-'*40)
-    for w in 'кошка собака яма катапультами'.split():
+    for w in 'голубое кошка собака яма катапультами'.split():
         ax = accents.render_accenture(w)
         print('{} --> {}'.format(w, ax))
 
