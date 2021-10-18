@@ -465,8 +465,8 @@ if __name__ == '__main__':
             generated_poems = generate_poems(seed)
 
             print('\n====== BEST POEMS ======\n')
-            for caption, lines, score in sorted(generated_poems, key=lambda z: -z[2])[:4]:
+            for caption, text, score in sorted(generated_poems, key=lambda z: -z[2])[:4]:
                 print('# score={}'.format(score))
                 print('--- {} ---'.format(caption))
-                print('\n'.join(lines))
+                print(text)
                 print('\n\n')

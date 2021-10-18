@@ -124,8 +124,9 @@ def echo(update, context):
                 haiku = haiku.replace(' | ', '\n')
 
             if haiku.count('\n') == 2:
-                captions = caption_generator.generate_output(haiku)
-                caption = captions[0]
+                #captions = caption_generator.generate_output(haiku)
+                #caption = captions[0]
+                caption = '***'
                 p_plagiat = antiplagiat.score(haiku)
                 logging.info('HAIKU #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', ipoem, q, user_id, p_plagiat, haiku.replace('\n', ' | '))
                 if p_plagiat < 0.90:
@@ -229,8 +230,8 @@ if __name__ == '__main__':
     haiku_generator = RugptGenerator()
     haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
 
-    caption_generator = RugptGenerator()
-    caption_generator.load(os.path.join(models_dir, 'rugpt_caption_generator'))
+    #caption_generator = RugptGenerator()
+    #caption_generator.load(os.path.join(models_dir, 'rugpt_caption_generator'))
 
     if mode == 'telegram':
         logging.info('Starting telegram bot')
@@ -267,8 +268,9 @@ if __name__ == '__main__':
                         haiku = haiku.replace(' | ', '\n')
 
                     if haiku.count('\n') == 2:
-                        captions = caption_generator.generate_output(haiku)
-                        caption = captions[0]
+                        #captions = caption_generator.generate_output(haiku)
+                        #caption = captions[0]
+                        caption = '***'
                         print('HAIKU #{} for seed={}:'.format(ipoem, q))
                         p_plagiat = antiplagiat.score(haiku)
                         print('p_plagiat={}'.format(p_plagiat))

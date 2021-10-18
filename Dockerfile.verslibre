@@ -10,19 +10,8 @@ RUN apt-get install -y python python-pip
 RUN apt-get -y install git-core
 RUN apt-get install -y liblzma-dev
 
-RUN pip install --upgrade pip
-RUN pip install --upgrade setuptools
-
-RUN pip install torch
-RUN pip install tensorflow
-RUN pip install transformers
-RUN pip install pyconll
-RUN pip install ufal.udpipe
-RUN pip install fasttext
-RUN pip install nltk
-RUN pip install sentencepiece
-RUN pip install coloredlogs
-RUN pip install python-telegram-bot
+RUN pip install --upgrade pip setuptools
+RUN pip install torch tensorflow transformers pyconll ufal.udpipe fasttext nltk sentencepiece coloredlogs python-telegram-bot jellyfish
 
 
 WORKDIR /home
@@ -35,6 +24,9 @@ RUN pip install git+https://github.com/Koziev/rusyllab
 
 RUN apt-get clean
 
+WORKDIR /text_generator/py
+COPY ./py/antiplagiat.py ./
+
 WORKDIR /text_generator/py/generative_poetry
 COPY ./py/generative_poetry/run_complex_poetry_generator4.py ./
 COPY ./py/generative_poetry/init_logging.py ./
@@ -42,6 +34,7 @@ COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
 COPY ./py/generative_poetry/select_rhymed_words.py ./
 COPY ./py/generative_poetry/rugpt_generator.py ./
+COPY ./py/generative_poetry/meter_renderer.py ./
 
 
 WORKDIR /text_generator/py/poetry
