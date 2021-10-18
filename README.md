@@ -8,7 +8,7 @@
 
 ![телеграм бот для генерации хайку](haiku_telegram.png)
 
-Доступен докер-образ **inkoziev/haiku:latest** для запуска генератора как телеграм-бота.
+Доступен докер-образ [inkoziev/haiku:latest](https://hub.docker.com/repository/docker/inkoziev/haiku) для запуска генератора как телеграм-бота.
 
 Загружаем образ и запускаем:
 
@@ -31,7 +31,7 @@ sudo docker run -it inkoziev/haiku
 ![телеграм бот для генерации четырехстрочников](verslibre_telegram.png)
 
 Бинарные файлы моделей из-за своего большого размера не выложены, но доступны
-в докер-образе **inkoziev/verslibre:latest**.
+в докер-образе [inkoziev/verslibre:latest](https://hub.docker.com/repository/docker/inkoziev/verslibre).
 
 Скачиваем и запускаем образ:
 
