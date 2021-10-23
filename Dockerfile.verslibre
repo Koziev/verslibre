@@ -76,6 +76,9 @@ COPY ./scripts/verslibre_tg.sh ./
 WORKDIR /text_generator/models/rugpt_slot_filler
 COPY ./models/rugpt_slot_filler/* ./
 
+WORKDIR /text_generator/models/rugpt_caption_generator
+COPY ./models/rugpt_caption_generator/* ./
+
 
 WORKDIR /text_generator/py/generative_poetry
 CMD "/text_generator/scripts/verslibre_tg.sh"

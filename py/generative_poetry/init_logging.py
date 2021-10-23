@@ -1,13 +1,14 @@
 import logging
 import coloredlogs
+import absl.logging  # https://github.com/tensorflow/tensorflow/issues/26691
 
 
 def init_logging(logfile_path, debugging=True):
     # настраиваем логирование в файл и эхо-печать в консоль
 
     # https://github.com/tensorflow/tensorflow/issues/26691
-    #logging.root.removeHandler(absl.logging._absl_handler)
-    #absl.logging._warn_preinit_stderr = False
+    logging.root.removeHandler(absl.logging._absl_handler)
+    absl.logging._warn_preinit_stderr = False
 
     log_level = logging.DEBUG if debugging else logging.ERROR
     logging.basicConfig(level=log_level,

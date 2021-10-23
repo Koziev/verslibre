@@ -1,4 +1,5 @@
 import itertools
+import re
 
 
 class UdpipeMeterRenderer:
@@ -61,3 +62,37 @@ class UdpipeMeterRenderer:
                     word_signs.append(0)
 
         return word_signs
+
+    def add_stress_marks(self, sentence_text):
+        output = []
+        not_stressed_classes = 'SCONJ CCONJ PART ADP PUNCT'.split()
+
+        parsings = self.udpipe_parser.parse_text(sentence_text)
+        for parsing in parsings:
+            for ud_token in parsing:
+                do_stress = True
+                if ud_token.upos in not_stressed_classes:
+                    if self.accentuator.get_vowel_count(ud_token.form) < 2:
+                        do_stress = False
+
+                if do_stress:
+                    if output:
+                        output.append(' ')
+
+                    word = ud_token.form.lower()
+                    a = self.accentuator.get_accent(word, ud_tags=[(k + '=' + list(vx)[0]) for k, vx in ud_token.feats.items()])
+
+                    n_vowels = 0
+                    for c, c0 in zip(word, ud_token.form):
+                        output.append(c0)
+                        if c in 'уеыаоэёяию':
+                            n_vowels += 1
+                            if n_vowels == a:
+                                output.append('\u0301')
+                else:
+                    if output and re.search(r'\w', ud_token.form):
+                        output.append(' ')
+
+                    output.extend(list(ud_token.form))
+
+        return ''.join(output)
