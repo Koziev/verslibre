@@ -1,6 +1,7 @@
 """
-Третья версия генератора рифмованных четверостиший из одних GPT.
-Первые две строки берем из эталонных стихов.
+Третья версия генератора рифмованных четверостиший на одних GPT.
+Первые две строки берем из результатов работы генератора верлибра, следующие
+2 строчки генерируем дописыванием начала под выбранные рифмованные слова.
 """
 
 import io
@@ -13,6 +14,7 @@ import argparse
 import logging
 
 import numpy as np
+import torch
 import jellyfish
 
 import telegram
@@ -21,8 +23,9 @@ from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardBu
 
 import rutokenizer
 import ruword2tags
+#import transcriber
 
-from poetry.phonetic import Accents
+from poetry.phonetic import Accents, rhymed
 from select_rhymed_words import RhymeSelector
 from rugpt_generator import RugptGenerator
 from antiplagiat import Antiplagiat
@@ -116,7 +119,6 @@ def get_user_id(update: Update) -> str:
 
 LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
-NEW = 'Новая тема'
 MORE = 'Еще...'
 
 last_user_poems = dict()
@@ -136,10 +138,7 @@ def start(update, context) -> None:
                                        per_user=True)
 
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n".format(update.message.from_user.full_name)+\
-                                  "Я бот для генерации стихов. Мои исходники можно найти в https://github.com/Koziev/verslibre.\n"+\
-                                  "Задавайте тему в виде словосочетания из прилагательного и существительного.\n"+\
-                                  "Либо выберите готовую тему из предложенных",
+                             text='Привет, {}!\nЗадавайте тему в виде словосочетания из прилагательного и существительного.\nЛибо выберите готовую тему из предложенных'.format(update.message.from_user.full_name),
                              reply_markup=reply_markup)
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
@@ -150,68 +149,11 @@ def echo(update, context):
     try:
         user_id = get_user_id(update)
 
-        if update.message.text == NEW:
-            keyboard = [generate_seeds(user_id)]
-            reply_markup = ReplyKeyboardMarkup(keyboard,
-                                               one_time_keyboard=True,
-                                               resize_keyboard=True,
-                                               per_user=True)
-            context.bot.send_message(chat_id=update.message.chat_id,
-                                     text="Выберите тему из трёх предложенных или введите свою",
-                                     reply_markup=reply_markup)
-            return
-
-        if update.message.text == LIKE:
-            # Какой текст полайкали:
-            caption = last_user_poem[user_id][0]
-            poem = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('LIKE: caption="%s" poem="%s" user="%s"', caption, poem, user_id)
-
-            if len(last_user_poems[user_id]):
-                keyboard = [[NEW, MORE]]
-            else:
-                keyboard = [[NEW]]
-
-            reply_markup = ReplyKeyboardMarkup(keyboard,
-                                               one_time_keyboard=True,
-                                               resize_keyboard=True,
-                                               per_user=True)
-
-            context.bot.send_message(chat_id=update.message.chat_id, text="Спасибо :)", reply_markup=reply_markup)
-            return
-
-        if update.message.text == DISLIKE:
-            # Какой текст не понравился:
-            caption = last_user_poem[user_id][0]
-            poem = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('DISLIKE: caption="%s" poem="%s" user="%s"', caption, poem, user_id)
-
-            if len(last_user_poems[user_id]):
-                keyboard = [[NEW, MORE]]
-            else:
-                keyboard = [[NEW]]
-
-            reply_markup = ReplyKeyboardMarkup(keyboard,
-                                               one_time_keyboard=True,
-                                               resize_keyboard=True,
-                                               per_user=True)
-
-            context.bot.send_message(chat_id=update.message.chat_id, text="Понятно. Жаль :(", reply_markup=reply_markup)
-            return
-
         if update.message.text == MORE:
             # Выведем следующее из уже сгенерированных
-            caption, poem, msg = last_user_poems[user_id][-1]
-            if caption == '***':
-                encoded_poem = poem.replace('\n', ' | ')
-                logging.debug('Generating caption for poem="%s" user="%s"', encoded_poem, user_id)
-                captions = caption_generator.generate_output(encoded_poem, num_return_sequences=1)
-                caption = captions[0]
-                logging.debug('Caption generation: poem="%s" caption="%s" user="%s"', encoded_poem, caption, user_id)
-                msg = '--- {} ---\n\n{}'.format(caption, poem)
-
-            last_user_poem[user_id] = (caption, poem, msg)
-            last_user_poems[user_id] = last_user_poems[user_id][:-1]
+            m = last_user_poems[user_id][0]
+            last_user_poem[user_id] = m
+            last_user_poems[user_id] = last_user_poems[user_id][1:]
 
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
@@ -228,33 +170,46 @@ def echo(update, context):
 
             return
 
-        msg = random.choice(['Минуточку, или лучше две...', 'Ок, сажусь писать...', 'Хорошо, буду сочинять...',
-                             'Понял, приступаю...', 'Отлично, сейчас что-нибудь придумаю...'])
+        if update.message.text == LIKE:
+            # Какой текст полайкали:
+            caption = last_user_poem[user_id][0]
+            poem = last_user_poem[user_id][1].replace('\n', ' | ')
+            logging.info('LIKE: caption="%s" poem="%s"', caption, poem)
+            context.bot.send_message(chat_id=update.message.chat_id, text="Спасибо :)")
+
+            last_user_poem[user_id] = None
+            last_user_poems[user_id] = []
+
+            return
+
+        if update.message.text == DISLIKE:
+            # Какой текст не понравился:
+            caption = last_user_poem[user_id][0]
+            poem = last_user_poem[user_id][1].replace('\n', ' | ')
+            logging.info('DISLIKE: caption="%s" haiku="%s"', caption, poem)
+            context.bot.send_message(chat_id=update.message.chat_id, text="Понятно :(")
+
+            last_user_poem[user_id] = None
+            last_user_poems[user_id] = []
+
+            return
+
+        msg = random.choice(['Минуточку, или лучше две...', 'Ок, сажусь писать...', 'Хорошо, буду сочинять...'])
         context.bot.send_message(chat_id=update.message.chat_id, text=msg)
 
-        seed = update.message.text
-        logging.info('Will generate a poem using seed="%s" for user="%s" id=%s in chat=%s', seed, update.message.from_user.name, user_id, str(update.message.chat_id))
+        q = update.message.text
+        logging.info('Will generate a poem using seed="%s" for user="%s" id=%s in chat=%s', q, update.message.from_user.name, user_id, str(update.message.chat_id))
 
-        poems2 = generate_poems(seed)
+        poems2 = generate_poems(q)
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
 
         for ipoem, (caption, poem, score) in enumerate(poems2, start=0):
+            msg = '--- {} ---\n\n{}'.format(caption, poem)
             if ipoem == 1:
-                # Для первой поэмы сразу сгенерируем заголовок
-                if caption == '***':
-                    encoded_poem = poem.replace('\n', ' | ')
-                    logging.debug('Generating caption for poem="%s" seed="%s" user="%s"', encoded_poem, seed, user_id)
-                    captions = caption_generator.generate_output(encoded_poem, num_return_sequences=1)
-                    caption = captions[0]
-                    logging.debug('Caption generation: seed="%s" poem="%s" caption="%s" user_id="%s"', seed, encoded_poem, caption, user_id)
-
-                msg = '--- {} ---\n\n{}'.format(caption, poem)
-
                 last_user_poem[user_id] = (caption, poem, msg)
             else:
-                msg = '--- {} ---\n\n{}'.format(caption, poem)
                 last_user_poems[user_id].append((caption, poem, msg))
 
         if last_user_poem[user_id]:
@@ -290,8 +245,7 @@ def echo(update, context):
 def generate_poems(seed):
     logging.info('Start generating for seed="%s"', seed)
     generated_poems = []
-    all_texts = set()
-    prototypes = headlines_selector.find_nearest(seed, 10)
+    prototypes = poem_generator.generate_output(seed, num_return_sequences=10)
     while len(generated_poems) < 20:
         try:
             poem_lines = random.choice(prototypes).split('\n')
@@ -304,7 +258,7 @@ def generate_poems(seed):
 
             # Подбираем рифмы к первым двум строкам
             rhyme_pairs = []
-            if False:
+            if True:
                 rhymes1 = rselector.get_rhymes(get_last_word(tokenizer.tokenize(head_lines[0])))[:5]
                 rhymes2 = rselector.get_rhymes(get_last_word(tokenizer.tokenize(head_lines[1])))[:5]
 
@@ -367,18 +321,18 @@ def generate_poems(seed):
                         poem_score = p_13 * p_24 * p_3 * p_4  # * rhyme_score
 
                         final_text = '\n'.join([poem_lines[0], poem_lines[1], lines34[0], lines34[1]])
-                        if final_text not in all_texts:
-                            caption = '***'
-                            generated_poems.append((caption, final_text, poem_score))
-                            all_texts.add(final_text)
+                        generated_poems.append((final_text, poem_score))
         except KeyboardInterrupt:
             logging.error('Keyboard interrupt.')
             break
 
-    # Отсортировать собранные стихи по убыванию скора, оставить несколько лучших
+    # Отсортировать собранные стихи по убыванию скора, оставить несколько лучших, сгенерировать заголовки
     best_poems = []
     logging.debug('=== BEST POEMS ===')
-    for caption, poem_text, score in sorted(generated_poems, key=lambda z: -z[2])[:4]:
+    for poem_text, score in sorted(generated_poems, key=lambda z: -z[1])[:4]:
+        captions = caption_generator.generate_output(poem_text.replace('\n', ' | '), num_return_sequences=1)
+        caption = captions[0]
+
         logging.debug('# score=%5.3f', score)
         logging.debug('--- %s ---', caption)
         logging.debug('%s', poem_text.replace('\n', ' | '))
@@ -437,29 +391,10 @@ if __name__ == '__main__':
     caption_generator = RugptGenerator()
     caption_generator.load(os.path.join(models_dir, 'rugpt_caption_generator'))
 
-    headlines_selector_path = os.path.join(tmp_dir, 'headlines_selector.pkl')
-    if os.path.exists(headlines_selector_path):
-        with open(headlines_selector_path, 'rb') as f:
-            headlines_selector = pickle.load(f)
-    else:
-        headlines_selector = Antiplagiat()
-        with io.open(os.path.join(tmp_dir, 'poetry_corpus.readable.txt'), 'r') as rdr:
-            lines = []
-            for line in rdr:
-                s = line.strip()
-                if s:
-                    lines.append(s)
-                else:
-                    if len(lines) == 4:
-                        last_word3 = get_last_word(tokenizer.tokenize(lines[2]))
-                        last_word4 = get_last_word(tokenizer.tokenize(lines[3]))
-                        doc = '\n'.join([lines[0], lines[1], last_word3, last_word4])
-                        headlines_selector.add_document(doc)
-
-                    lines = []
-
-        with open(headlines_selector_path, 'wb') as f:
-            pickle.dump(headlines_selector, f)
+    # Генератор тела стиха (первых 2х строк)
+    logging.info('Loading GPT poetry generator...')
+    poem_generator = RugptGenerator()
+    poem_generator.load(os.path.join(models_dir, 'rugpt_poem_generator'))
 
     # Генератор двух строк, заканчивающихся заданными рифмами
     logging.info('Loading GPT slot filler...')
@@ -475,7 +410,7 @@ if __name__ == '__main__':
         if len(telegram_token) == 0:
             telegram_token = input('Enter Telegram token:> ').strip()
 
-    if args.mode == 'telegram':
+    if mode == 'telegram':
         logging.info('Starting telegram bot')
 
         # Телеграм-версия генератора
@@ -507,11 +442,6 @@ if __name__ == '__main__':
             print('\n====== BEST POEMS ======\n')
             for caption, text, score in sorted(generated_poems, key=lambda z: -z[2])[:4]:
                 print('# score={}'.format(score))
-
-                if caption == '***':
-                    captions = caption_generator.generate_output(text.replace('\n', ' | '), num_return_sequences=1)
-                    caption = captions[0]
-
                 print('--- {} ---'.format(caption))
                 print(text)
                 print('\n\n')
