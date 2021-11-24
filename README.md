@@ -30,6 +30,8 @@ sudo docker run -it inkoziev/haiku
 
 ![жёлтые таблетки солнца /// в руках ребёнка /// с поволокой неба](haiku_sunflower.jpg)
 
+Больше примеров хайку можно увидеть [в моем блоге](https://kelijah.livejournal.com/293532.html).
+
 
 ## Генерация четырехстрочников
 
@@ -80,7 +82,7 @@ sudo docker run -it inkoziev/verslibre:latest
 
 В подкаталоге [tmp](https://github.com/Koziev/verslibre/tmp) лежат файлы с частью обучающих данных:
 
-[poetry_corpus.txt](https://github.com/Koziev/verslibre/tmp/poetry_corpus.txt) - корпус отфильтрованных четверостиший, символ | в качестве разделителя строк; используется для дотренировки модели ruT5.  
+[poetry_corpus.txt](https://github.com/Koziev/verslibre/tmp/poetry_corpus.txt) - корпус отфильтрованных четверостиший, символ | в качестве разделителя строк; используется для дотренировки модели ruGPT.  
 [poem_generator_dataset.dat](https://github.com/Koziev/verslibre/tmp/poem_generator_dataset.dat) - датасет для тренировки ruGPT, выдающей текст стиха по теме (ключевому словосочетанию).  
 [captions_generator_rugpt.dat](https://github.com/Koziev/verslibre/tmp/captions_generator_rugpt.dat) - датасет для тренировки ruGPT, генерирующей заголовок стиха по его содержимому.  
 
