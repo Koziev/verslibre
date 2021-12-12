@@ -11,30 +11,28 @@ RUN apt-get -y install git-core
 RUN apt-get install -y liblzma-dev
 
 RUN pip install --upgrade pip setuptools
-RUN pip install torch tensorflow transformers pyconll ufal.udpipe fasttext nltk sentencepiece coloredlogs python-telegram-bot jellyfish
+RUN pip install torch tensorflow transformers pyconll ufal.udpipe fasttext nltk sentencepiece coloredlogs python-telegram-bot jellyfish hyperopt jsonpickle
 
 
 WORKDIR /home
-ADD ruword2tags.tar.gz /home
-WORKDIR /home/ruword2tags
-RUN pip install .
 
 RUN pip install git+https://github.com/Koziev/rutokenizer
 RUN pip install git+https://github.com/Koziev/rusyllab
 
 RUN apt-get clean
 
-WORKDIR /text_generator/py
-COPY ./py/antiplagiat.py ./
-
 WORKDIR /text_generator/py/generative_poetry
-COPY ./py/generative_poetry/run_complex_poetry_generator4.py ./
+COPY ./py/generative_poetry/run_stressed_gpt_poetry_generation_v2.py ./
 COPY ./py/generative_poetry/init_logging.py ./
 COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
-COPY ./py/generative_poetry/select_rhymed_words.py ./
-COPY ./py/generative_poetry/rugpt_generator.py ./
-COPY ./py/generative_poetry/meter_renderer.py ./
+COPY ./py/generative_poetry/poetry_alignment.py ./
+COPY ./py/generative_poetry/metre_classifier.py ./
+
+WORKDIR /text_generator/py/generative_poetry/experiments/rugpt_with_stress
+COPY ./py/generative_poetry/experiments/rugpt_with_stress/break_to_syllables.py ./
+COPY ./py/generative_poetry/experiments/rugpt_with_stress/arabize.py ./
+COPY ./py/generative_poetry/experiments/rugpt_with_stress/stressed_gpt_tokenizer.py ./
 
 
 WORKDIR /text_generator/py/poetry
@@ -52,10 +50,7 @@ COPY ./models/udpipe_syntagrus.model ./
 
 
 WORKDIR /text_generator/tmp
-COPY ./tmp/rselector.pkl ./
 COPY ./tmp/accents.pkl ./
-COPY ./tmp/headlines_selector.pkl ./
-COPY ./tmp/rhyme_dict.tsv ./
 
 
 
@@ -73,12 +68,8 @@ WORKDIR /text_generator/scripts/
 COPY ./scripts/verslibre_tg.sh ./
 
 
-WORKDIR /text_generator/models/rugpt_slot_filler
-COPY ./models/rugpt_slot_filler/* ./
-
-WORKDIR /text_generator/models/rugpt_caption_generator
-COPY ./models/rugpt_caption_generator/* ./
-
+WORKDIR /text_generator/models/stressed_poetry_generator
+COPY ./models/stressed_poetry_generator/* ./
 
 WORKDIR /text_generator/py/generative_poetry
 CMD "/text_generator/scripts/verslibre_tg.sh"
