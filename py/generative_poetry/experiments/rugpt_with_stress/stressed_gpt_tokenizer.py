@@ -144,6 +144,29 @@ class StressedGptTokenizer(transformers.tokenization_utils.PreTrainedTokenizer):
                         token_id = token_id.item()
 
                     token = self.id2str[token_id]
+
+                    if token.startswith('##'):
+                        # считываем последовательность ##-токенов
+                        subseq = [token[2:]]
+                        while True:
+                            cur += 1
+                            if cur >= l:
+                                token = ''
+                                token_id = 0
+                                break
+
+                            token_id = seq[cur]
+                            if isinstance(token_id, torch.Tensor):
+                                token_id = token_id.item()
+                            token = self.id2str[token_id]
+                            if token.startswith('##'):
+                                subseq.append(token[2:])
+                            else:
+                                break
+
+                        token2 = ''.join(subseq[::-1])
+                        chunks.append(token2)
+
                     if token == '|' or self.is_special_token(token_id):
                         chunks.append(token)
                         cur += 1
