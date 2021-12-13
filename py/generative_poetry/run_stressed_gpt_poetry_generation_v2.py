@@ -47,8 +47,6 @@ from transformers.generation_stopping_criteria import (
     validate_stopping_criteria,
 )
 
-
-
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
@@ -78,7 +76,7 @@ def sample_v2(
         return_dict_in_generate: Optional[bool] = None,
         synced_gpus: Optional[bool] = None,
         **model_kwargs,
-): # -> Union[SampleOutput, torch.LongTensor]:
+):  # -> Union[SampleOutput, torch.LongTensor]:
     r"""
     Generates sequences for models with a language modeling head using multinomial sampling.
 
@@ -274,21 +272,26 @@ def sample_v2(
         # inkoziev start
         nl_token_id = self.tokenizer.vocab['<nl>']
         break_token_id = self.tokenizer.vocab['|']
+        prompt_token_id = self.tokenizer.vocab['$']  # символ для отделения затравки и тела стиха
 
         input_ids_2 = input_ids.cpu().numpy()
+        # НАЧАЛО ОТЛАДКИ
+        #input_ids_2 = np.asarray([[2938, 25608, 12894, 20772, 13641, 20772, 8969, 22282, 24705, 20772, 13641, 20772, 14627, 20772, 13641, 20772, 15751, 20772, 17874, 20772, 3638, 20772, 22030, 20772, 24341, 11959, 5, 25604, 20772, 1017, 19467, 20772, 3413, 10931, 9189, 20772, 18333, 20772, 12038, 19142, 20772, 24341, 20772, 20317, 5, 2938, 25608, 12894, 20772, 22030, 20772, 9382, 4235, 671, 20772, 17993, 20772, 20523, 14097, 12138, 20772, 6127, 20772, 13641, 20772, 6710, 20772, 9382, 11225, 20772, 20317, 5, 9783, 9245, 20772, 6920, 6345, 20772, 24975, 20772, 13641, 20772, 7355, 11225, 20772, 13641, 20772, 1003, 21359, 20772, 3372, 21333, 20772, 23719, 5, 2]], dtype=np.int)
+        #sss = self.tokenizer.decode(input_ids_2[0, :], clean_up_tokenization_spaces=True)
+        # КОНЕЦ ОТЛАДКИ
         nb_bad_rows = 0
         row_validity = [True] * input_ids_2.shape[0]
         for irow, row_ids in enumerate(input_ids_2):
             rhymes = []
-            state = 'nl_hit'
+            state = 'unknown'
             last_nl_pos = -1
             bad_row = False
-            for j, x in enumerate(row_ids[1:]):  # первый токен в каждой цепочке это <s>, его пропускаем
-                if x == nl_token_id:
+            for j, x in enumerate(row_ids):
+                if x in (prompt_token_id, nl_token_id):
                     state = 'nl_hit'
                     last_nl_pos = j
                 elif x == break_token_id:
-                    if state == 'nl_hit':  # нас интересует первое слово после <nl> (так как у нас цепочки right2left, то это фактически последнее слово в строке)
+                    if state == 'nl_hit':  # нас интересует первое слово после "<nl>" или "$" (так как у нас цепочки right2left, то это фактически последнее слово в строке)
                         rhyme = ' '.join(map(str, row_ids[last_nl_pos+1: j]))
                         if rhyme in rhymes:
                             bad_row = True
@@ -300,12 +303,6 @@ def sample_v2(
 
             if bad_row:
                 row_validity[irow] = False
-            #    # Плохая цепочка генерации, т.к. есть повтор в рифме. Исключим эту цепочку.
-            #    input_ids_2 = np.delete(input_ids_2, axis=0, obj=irow)
-            #    unfinished_sequences_2 = np.delete(unfinished_sequences_2, axis=0, obj=irow)
-            #else:
-            #    irow += 1
-
 
         if nb_bad_rows > 0:
             # из текущего тензора с цепочками генерации исключена 1 или больше цепочек.
@@ -318,6 +315,20 @@ def sample_v2(
                 for tensor1, tensor2 in model_kwargs['past']:
                     new_pkv.append((tensor1[row_validity], tensor2[row_validity]))
                 model_kwargs['past'] = tuple(new_pkv)
+
+        # НАЧАЛО ОТЛАДКИ
+        if False:
+            print('DEBUG@325')
+            sep_id = self.tokenizer.vocab['$']
+            X = input_ids.cpu().numpy()
+            for i, row in enumerate(X):
+                row = row.tolist()
+                sep_pos = row.index(sep_id)
+                row2 = row[sep_pos+1:]
+                print('[{}] {}'.format(i, ', '.join(str(x) for x in row2)))
+                print('{}'.format(self.tokenizer.decode(row2, clean_up_tokenization_spaces=True)))
+            print('END OF DEBUG@332')
+        # КОНЕЦ ОТЛАДКИ
 
         # inkoziev end
         # =============================================
@@ -390,6 +401,14 @@ class RugptGenerator:
         if len(output_sequences.shape) > 2:
             output_sequences.squeeze_()
 
+        # НАЧАЛО ОТЛАДКИ
+        if False:
+            x = output_sequences.cpu().numpy()
+            for i, row in enumerate(x):
+                print('[{}] {}'.format(i, ', '.join(str(x) for x in row[encoded_prompt.shape[1]:])))
+                print('{}'.format(self.tokenizer.decode(row[encoded_prompt.shape[1]:], clean_up_tokenization_spaces=True)))
+        # КОНЕЦ ОТЛАДКИ
+
         generated_sequences = set()
         for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
             generated_sequence = generated_sequence.tolist()[encoded_prompt.shape[1]:]
@@ -435,7 +454,7 @@ def generate_poems(topic):
 
     # Отранжируем результат генерации по консистентности ритма...
     ranked_poems = []
-    for poem in poems:
+    for ipoem, poem in enumerate(poems):
         lines = [decode_line2(line) for line in poem.split('<nl>') if len(line) > 0]
         if len(lines) == 4:
             score = 0.0
@@ -578,7 +597,7 @@ def echo(update, context):
 
         msg = random.choice(['Минуточку, или лучше две...', 'Ок, сажусь писать...', 'Хорошо, буду сочинять...',
                              'Понял, приступаю...', 'Отлично, сейчас что-нибудь придумаю...',
-                             'Ни слова больше! Пошло вдохновение...', 'Стихи сочинять иду я', 'Ловлю волну вдохновения',
+                             'Ни слова больше! Я поймал вдохновение...', 'Стихи сочинять иду я', 'Ловлю волну вдохновения',
                              'Уже стучу по кнопкам!', 'Всегда мечтал об этом написать', 'Тема непростая, но я попробую',
                              'Сделаю всё, что в моих силах...'])
         context.bot.send_message(chat_id=update.message.chat_id, text=msg)
@@ -651,7 +670,6 @@ if __name__ == '__main__':
     #s = poem_generator.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
     #exit(0)
     # КОНЕЦ ОТЛАДКИ
-
 
     udpipe = UdpipeParser()
     udpipe.load(models_dir)
