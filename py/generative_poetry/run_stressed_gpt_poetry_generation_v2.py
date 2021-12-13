@@ -392,7 +392,7 @@ class RugptGenerator:
 
         generated_sequences = set()
         for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
-            generated_sequence = generated_sequence.tolist()
+            generated_sequence = generated_sequence.tolist()[encoded_prompt.shape[1]:]
 
             # Decode text
             text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
@@ -402,9 +402,10 @@ class RugptGenerator:
                 text = text[: text.find(stop_token)]
 
             # Add the prompt at the beginning of the sequence. Remove the excess text that was used for pre-processing
-            total_sequence = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
-            total_sequence = total_sequence.strip().replace('<pad>', '')
-            generated_sequences.add(total_sequence)
+            #total_sequence = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
+            #total_sequence = total_sequence.strip().replace('<pad>', '')
+            #generated_sequences.add(total_sequence)
+            generated_sequences.add(text.strip().replace('<pad>', ''))
 
         return list(generated_sequences)
 
@@ -576,7 +577,10 @@ def echo(update, context):
             return
 
         msg = random.choice(['Минуточку, или лучше две...', 'Ок, сажусь писать...', 'Хорошо, буду сочинять...',
-                             'Понял, приступаю...', 'Отлично, сейчас что-нибудь придумаю...'])
+                             'Понял, приступаю...', 'Отлично, сейчас что-нибудь придумаю...',
+                             'Ни слова больше! Пошло вдохновение...', 'Стихи сочинять иду я', 'Ловлю волну вдохновения',
+                             'Уже стучу по кнопкам!', 'Всегда мечтал об этом написать', 'Тема непростая, но я попробую',
+                             'Сделаю всё, что в моих силах...'])
         context.bot.send_message(chat_id=update.message.chat_id, text=msg)
 
         seed = update.message.text
@@ -641,6 +645,13 @@ if __name__ == '__main__':
 
     poem_generator = RugptGenerator()
     poem_generator.load(os.path.join(models_dir, 'stressed_poetry_generator'))
+
+    # НАЧАЛО ОТЛАДКИ
+    #generated_sequence = [1003, 20681, 20772, 19860, 20772, 19875, 1017, 20772, 10142, 20772, 671, 20772, 338, 20772, 10533, 20772, 13658, 5, 24335, 19999, 18486, 17874, 20772, 4095, 11931, 20772, 25279, 12683, 14439, 584, 4149, 755, 12232, 5, 1003, 15430, 20772, 14447, 14591, 12265, 20772, 6632, 8749, 20772, 1375, 19864, 5, 24335, 15571, 7756, 20772, 13641, 20772, 10142, 20772, 23242, 20772, 10205, 19073, 7939, 20772, 13658, 5, 2]
+    #s = poem_generator.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
+    #exit(0)
+    # КОНЕЦ ОТЛАДКИ
+
 
     udpipe = UdpipeParser()
     udpipe.load(models_dir)
