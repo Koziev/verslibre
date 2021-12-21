@@ -5,6 +5,8 @@ End-2-end генерация рифмованного четверостишья
 09-12-2021 Подключен StressedGptTokenizer и используется tokenizer_config.json
 09-12-2021 Доработка для телеграм-бота
 11-12-2021 Переписываем код top_t+top_p сэмплинга, чтобы банить цепочки с повтором рифмуемого слова.
+14-12-2021 Добавлен код для автоматической пакетной оценки качества генерации.
+18-12-2021 Добавлена коррекция пробелов после декодера, модуль whitespace_normalization
 """
 
 import os
@@ -16,6 +18,8 @@ import traceback
 import warnings
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
+from scipy import stats
+import tqdm
 import numpy as np
 import torch
 import torch.nn
@@ -59,6 +63,7 @@ from generative_poetry.experiments.rugpt_with_stress.break_to_syllables import b
 from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.experiments.rugpt_with_stress.stressed_gpt_tokenizer import StressedGptTokenizer
 from poetry_seeds import generate_seeds
+from generative_poetry.whitespace_normalization import normalize_whitespaces
 
 
 def sample_v2(
@@ -443,14 +448,19 @@ def decode_line2(line0, remove_stress_marks=True):
         out_words.append(out_word)
 
     s = ' '.join(out_words[::-1])
-    s = s.replace(' ,', ',').replace(' .', '.').replace(' ?', '?').replace(' !', '!').replace(' …', '…').replace(' :', ':')
+    #s = s.replace(' ,', ',').replace(' .', '.').replace(' ?', '?').replace(' !', '!').replace(' …', '…').replace(' :', ':')
+    s = normalize_whitespaces(s)
     return s
 
 
-def generate_poems(topic):
+def generate_poems(topic, score_threshold=0.05, verbosity=1):
     seed = arabize(break_to_syllables(udpipe, accents, topic.lower()))
 
-    poems = poem_generator.generate_output(seed, num_return_sequences=10)
+    try:
+        poems = poem_generator.generate_output(seed, num_return_sequences=10)
+    except Exception as ex:
+        logging.error(ex)
+        return []
 
     # Отранжируем результат генерации по консистентности ритма...
     ranked_poems = []
@@ -462,23 +472,23 @@ def generate_poems(topic):
                 a = aligner.align(lines)
                 if a is not None:
                     score = a.score
-            except:
-                pass
-            if score > 0.05:
+            except Exception as e:
+                logging.error('Exception: %s', str(e) + '\n' + traceback.format_exc() + '\n')
+
+            if score > score_threshold:
                 ranked_poems.append((lines, score))
             elif score == 0.0:
-                # НАЧАЛО ОТЛАДКИ
-                logging.info('@451 === BAD GENERATION ===')
-                logging.info('Raw lines:')
-                for line in poem.split('<nl>'):
-                    if len(line) > 0:
-                        logging.info('%s', line)
+                if verbosity > 0:
+                    logging.info('@451 === BAD GENERATION ===')
+                    logging.info('Raw lines:')
+                    for line in poem.split('<nl>'):
+                        if len(line) > 0:
+                            logging.info('%s', line)
 
-                logging.info('Decoded lines:')
-                for line in poem.split('<nl>'):
-                    if len(line) > 0:
-                        logging.info('%s', decode_line2(line, remove_stress_marks=False))
-                # КОНЕЦ ОТЛАДКИ
+                    logging.info('Decoded lines:')
+                    for line in poem.split('<nl>'):
+                        if len(line) > 0:
+                            logging.info('%s', decode_line2(line, remove_stress_marks=False))
 
     ranked_poems = sorted(ranked_poems, key=lambda z: -z[1])
     return ranked_poems
@@ -650,7 +660,7 @@ def echo(update, context):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Verslibre generator v.6')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
-    parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split())
+    parser.add_argument('--mode', type=str, default='console', choices='console telegram evaluate'.split())
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
     parser.add_argument('--models_dir', default='../../models', type=str)
     parser.add_argument('--log', type=str, default='../../tmp/stressed_gpt_poetry_generation.log')
@@ -708,6 +718,27 @@ if __name__ == '__main__':
         logging.info('Start polling messages for bot %s', tg_bot.name)
         updater.start_polling()
         updater.idle()
+    elif args.mode == 'evaluate':
+        # Запускаем генерацию много раз со случайными затравками, подсчитываем статистику по оценке качества стихов
+        # с помощью StressedPoetryAligner.
+        top5_scores = []  # накопление оценок для top5 генераций по каждой затравке
+        n_runs = 100
+        n_empty_generations = 0  # кол-во затравок, для которых генератор не выдал ни одной генерации
+
+        for _ in tqdm.tqdm(range(n_runs), total=n_runs):
+            for seed in generate_seeds('evaluation'):
+                ranked_poems = generate_poems(seed, score_threshold=0.01, verbosity=0)
+                if len(ranked_poems) == 0:
+                    n_empty_generations += 1
+                else:
+                    for poem, score in ranked_poems[:5]:
+                        top5_scores.append(score)
+
+        print('n_empty_generations = {}'.format(n_empty_generations))
+        print('max(top5_scores)    = {}'.format(np.max(top5_scores)))
+        print('mean(top5_scores)   = {}'.format(np.mean(top5_scores)))
+        print('std(top5_score)     = {}'.format(np.var(top5_scores)))
+        #print(stats.describe(top5_scores))
     else:
         # Тестирование в консоли
         while True:

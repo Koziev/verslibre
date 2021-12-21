@@ -1,15 +1,23 @@
+"""
+15-12-2021 Введен сильный штраф за 2 подряд ударных слога
+17-12-2021 Регулировка ударности некоторых наречий и частиц, удаление лишних пробелов вокруг дефиса при выводе строки с ударениями
+18-12-2021 Коррекция пробелов вынесена в отдельный модуль whitespace_normalization
+"""
+
 import itertools
 from functools import reduce
 import os
 import io
 import jellyfish
 import hyperopt
+import re
 from hyperopt import hp, tpe, STATUS_OK, Trials
 
 from poetry.phonetic import Accents, rhymed
 from generative_poetry.udpipe_parser import UdpipeParser
 from generative_poetry.metre_classifier import get_syllables
 from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
+from generative_poetry.whitespace_normalization import normalize_whitespaces
 
 
 # алгоритм сэмплирования гиперпараметров
@@ -18,13 +26,15 @@ HYPEROPT_ALGO = tpe.suggest  # tpe.suggest OR hyperopt.rand.suggest
 
 COEFF = dict()
 COEFF['@68'] = 0.5
+COEFF['@68_2'] = 0.95
 COEFF['@71'] = 1.0
-COEFF['@75'] = 0.8
+COEFF['@75'] = 0.9  # 0.8
 COEFF['@77'] = 1.0
+COEFF['@77_2'] = 1.0
 COEFF['@79'] = 1.0
 COEFF['@126'] = 0.98
 COEFF['@225'] = 0.9
-
+COEFF['@143'] = 0.9
 
 
 class WordStressVariant(object):
@@ -110,11 +120,15 @@ class PoetryWord(object):
         variants = []
 
         nvowels = sum((c in 'уеыаоэёяию') for c in self.form.lower())
+        uform = self.form.lower()
 
-        if self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART'):
+        if self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ'):
             # Предлоги, союзы, частицы предпочитаем без ударения,
             # поэтому базовый вариант добавляем с дисконтом:
-            variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
+            if uform in ['лишь', 'вроде', 'если', 'чтобы', 'когда', 'просто', 'мимо', 'даже', 'всё', 'хотя', 'едва', 'нет']:
+                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
+            else:
+                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
 
             # а вариант без ударения - с нормальным скором:
             variants.append(WordStressVariant(self, -1, COEFF['@71']))
@@ -125,8 +139,16 @@ class PoetryWord(object):
                 # вариант без ударения
                 variants.append(WordStressVariant(self, -1, COEFF['@77']))
             else:
+                if uform in ['эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей', 'мою', 'твою', 'его', 'ее', 'её']:
+                    # Безударный вариант для таких двусложных прилагательных
+                    variants.append(WordStressVariant(self, -1, COEFF['@77_2']))
+
                 variants.append(WordStressVariant(self, self.stress_pos, COEFF['@79']))
         else:
+            if uform in ['есть', 'раз']:
+                # безударный вариант
+                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@143']))
+
             # Добавляем исходный вариант с ударением
             variants.append(WordStressVariant(self, self.stress_pos, 1.0))
 
@@ -147,6 +169,13 @@ class LineStressVariant(object):
         self.stress_signature = list(itertools.chain(*(w.stress_signature for w in stressed_words)))
         self.stress_signature_str = ''.join(map(str, self.stress_signature))
         self.total_score = reduce(lambda x, y: x*y, [w.score for w in stressed_words])
+        # добавка от 15-12-2021: два подряд ударных слога наказываем сильно!
+        if '11' in self.stress_signature_str:
+            self.total_score *= 0.1
+        # добавка от 16-12-2021: безударное последнее слово наказываем сильно!
+        if self.stressed_words[-1].new_stress_pos == -1:
+            self.total_score *= 0.1
+
 
     def __repr__(self):
         s = '〚' + ' '.join(w.__repr__() for w in self.stressed_words) + '〛'
@@ -156,7 +185,7 @@ class LineStressVariant(object):
 
     def get_stressed_line(self):
         s = ' '.join(w.get_stressed_form() for w in self.stressed_words)
-        s = s.replace(' ,', ',').replace(' .', '.').replace(' ?', '?').replace(' !', '!').replace(' …', '…').replace(' ;', ';').replace(':', ':')
+        s = normalize_whitespaces(s)
         return s
 
     def get_unstressed_line(self):
