@@ -17,69 +17,7 @@ import networkx
 
 from poetry.utils import decode_pos
 from poetry.corpus_analyser import CorpusWords
-
-
-class Word2Lemmas(object):
-    def __init__(self):
-        self.lemmas = None
-        self.forms = None
-        self.noun_lemmas = None
-        self.adj_lemmas = None
-        self.verb_lemmas = None
-        self.adv_lemmas = None
-
-    def load(self, path, all_words):
-        logging.info('Loading lexicon from "%s"', path)
-        self.lemmas = dict()
-        self.forms = dict()
-        self.noun_lemmas = set()
-        self.adj_lemmas = set()
-        self.verb_lemmas = set()
-        self.adv_lemmas = set()
-
-        with io.open(path, 'r', encoding='utf-8') as rdr:
-            for line in rdr:
-                tx = line.strip().split('\t')
-                if len(tx) == 4:
-                    form = tx[0].replace(u' - ', u'-').lower()
-                    if form in all_words:
-                        lemma = tx[1].replace(u' - ', u'-').lower()
-                        pos = decode_pos(tx[2])
-
-                        if form not in self.forms:
-                            self.forms[form] = [lemma]
-                        else:
-                            self.forms[form].append(lemma)
-
-                        k = lemma+'|'+pos
-                        if k not in self.lemmas:
-                            self.lemmas[k] = {form}
-                        else:
-                            self.lemmas[k].add(form)
-
-                        if pos == 'СУЩЕСТВИТЕЛЬНОЕ':
-                            self.noun_lemmas.add(lemma)
-                        elif pos == 'ПРИЛАГАТЕЛЬНОЕ':
-                            self.adj_lemmas.add(lemma)
-                        elif pos == 'ГЛАГОЛ':
-                            self.verb_lemmas.add(lemma)
-                        elif pos == 'НАРЕЧИЕ':
-                            self.adv_lemmas.add(lemma)
-
-        logging.info('Lexicon loaded: %d lemmas, %d wordforms', len(self.lemmas), len(self.forms))
-
-    def get_lemma(self, word):
-        if word in self.forms:
-            return self.forms[word][0]
-        else:
-            return word
-
-    def get_forms(self, lemma, part_of_speech):
-        k = lemma + '|' + part_of_speech
-        if k in self.lemmas:
-            return self.lemmas[k]
-        else:
-            return [lemma]
+from poetry.word2lemmas import Word2Lemmas
 
 
 class Thesaurus:
@@ -364,8 +302,33 @@ if __name__ == "__main__":
     grdict = GrammarDict()
     grdict.load(os.path.join(data_folder, 'dict/word2tags.dat'), corpus)
 
+    # НАЧАЛО ОТЛАДКИ
+    if False:
+        with open(dict_pickle_path, 'wb') as f:
+            pickle.dump(thesaurus, f)
+
+        with open(dict_pickle_path, 'rb') as f:
+            dbg = pickle.load(f)
+
+        exit(0)
+    # КОНЕЦ ОТЛАДКИ
+
+
     logging.info('Storing dictionary parts to "%s"', dict_pickle_path)
     with open(dict_pickle_path, 'wb') as f:
         pickle.dump(thesaurus, f)
         pickle.dump(lexicon, f)
         pickle.dump(grdict, f)
+
+    # НАЧАЛО ОТЛАДКИ
+    if True:
+        with open(dict_pickle_path, 'rb') as f:
+            thesaurus2 = pickle.load(f)
+            lexicon2 = pickle.load(f)
+            grdict2 = pickle.load(f)
+
+        exit(0)
+    # КОНЕЦ ОТЛАДКИ
+
+    print('All done.')
+
