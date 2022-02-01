@@ -1,10 +1,16 @@
 import logging
+import datetime
 import coloredlogs
 import absl.logging  # https://github.com/tensorflow/tensorflow/issues/26691
 
 
 def init_logging(logfile_path, debugging=True):
     # настраиваем логирование в файл и эхо-печать в консоль
+
+    # заменяем подстроку {DATETIME} в имени файла лога на текущее время и дату, чтобы логи от новых
+    # запусков ботов не затирались
+    if '{DATETIME}' in logfile_path:
+        logfile_path = logfile_path.replace('{DATETIME}', datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
 
     # https://github.com/tensorflow/tensorflow/issues/26691
     logging.root.removeHandler(absl.logging._absl_handler)
