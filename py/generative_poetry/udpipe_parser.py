@@ -17,6 +17,21 @@ class UDPipeToken:
     def __repr__(self):
         return self.form
 
+    def get_attr(self, attr_name):
+        k = attr_name + '='
+        for t in self.tags:
+            if t.startswith(k):
+                return t.split('=')[1]
+        return ''
+
+
+def get_attr(token, tag_name):
+    if tag_name in token.feats:
+        v = list(token.feats[tag_name])[0]
+        return v
+
+    return ''
+
 
 class UdpipeParser:
     def __init__(self):
@@ -43,8 +58,23 @@ class UdpipeParser:
         try:
             for parsing0 in pyconll.load_from_string(processed):
                 parsing = []
-                for token in parsing0:
+                for itoken, token in enumerate(parsing0):
                     utoken = token.form.lower()
+
+                    # 24-12-2021 Руками исправляем некоторые очень частотные ошибки.
+                    if utoken == 'душе':
+                        is_soul_dative = False
+                        if token.id == '1':
+                            is_soul_dative = True
+                        else:
+                            for neighb_token in parsing0[itoken-1: itoken+2]:
+                                if neighb_token.upos in ('ADJ', 'DET') and get_attr(neighb_token, 'Gender') == 'Fem':
+                                    is_soul_dative = True
+                                    break
+
+                        if is_soul_dative:
+                            parsing.append(UDPipeToken(token, upos='NOUN', tags=['Case=Dat']))
+                            continue
                     if utoken in ['чтоб']:
                         # Исправляем ошибки разметки некоторых слов в UDPipe.Syntagrus
                         parsing.append(UDPipeToken(token, upos='SCONJ', tags=[]))
@@ -57,3 +87,14 @@ class UdpipeParser:
             return None
 
         return parsings
+
+
+if __name__ == '__main__':
+    parser = UdpipeParser()
+    parser.load('/home/inkoziev/polygon/text_generator/models')
+
+    parsing = parser.parse_text('Твоей душе испорченной')[0]
+    for token in parsing:
+        print('{} {} {}'.format(token.form, token.upos, token.tags))
+
+
