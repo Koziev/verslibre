@@ -32,6 +32,7 @@ from poetry.corpus_analyser import CorpusWords
 class Accents:
     def __init__(self):
         self.ambiguous_accents = None
+        self.ambiguous_accents2 = None
         self.word_accents_dict = None
         self.yo_words = None
         self.rhymed_words = set()
@@ -66,6 +67,9 @@ class Accents:
         d = yaml.safe_load(io.open(path, 'r', encoding='utf-8').read())
         self.ambiguous_accents = d
         logging.info('%d items in ambiguous_accents', len(self.ambiguous_accents))
+
+        # Некоторые слова допускают разное ударение для одной грамматической формы: пОнял-понЯл
+        self.ambiguous_accents2 = yaml.safe_load(io.open(os.path.join(data_dir, 'ambiguous_accents_2.yaml'), 'r', encoding='utf-8').read())
 
         self.word_accents_dict = dict()
 
@@ -152,7 +156,12 @@ class Accents:
                     nword = self.sanitize_word(word)
                     if nword in self.ambiguous_accents:
                         del self.ambiguous_accents[nword]
-                    accent_char = re.search('([АЕЁИОУЭЮЯ])', word).groups(0)[0]
+                    m = re.search('([АЕЁИОУЭЮЯЫ])', word)
+                    if m is None:
+                        logging.error('Invalid item "%s" in "true_accents.txt"', word)
+                        exit(0)
+
+                    accent_char = m.groups(0)[0]
                     accent_pos = word.index(accent_char)
                     nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False) + 1
                     self.word_accents_dict[nword] = nb_vowels_before
@@ -168,6 +177,7 @@ class Accents:
     def save_pickle(self, path):
         with open(path, 'wb') as f:
             pickle.dump(self.ambiguous_accents, f)
+            pickle.dump(self.ambiguous_accents2, f)
             pickle.dump(self.word_accents_dict, f)
             pickle.dump(self.yo_words, f)
             pickle.dump(self.rhymed_words, f)
@@ -175,6 +185,7 @@ class Accents:
     def load_pickle(self, path):
         with open(path, 'rb') as f:
             self.ambiguous_accents = pickle.load(f)
+            self.ambiguous_accents2 = pickle.load(f)
             self.word_accents_dict = pickle.load(f)
             self.yo_words = pickle.load(f)
             self.rhymed_words = pickle.load(f)
@@ -300,7 +311,7 @@ class Accents:
 
     def get_vowel_count(self, word0, abbrevs=True):
         word = self.sanitize_word(word0)
-        vowels = "уеыаоэёяию"
+        vowels = "уеыаоэёяиюaeoy" # "уеыаоэёяию"   28.12.2021 добавил гласные из латиницы
         vowel_count = 0
 
         for ch in word:
@@ -338,7 +349,8 @@ class Accents:
                 if c.isupper():
                     return n_vowels
 
-        raise NotImplementedError()
+        msg = 'Could not predict stress position in word="{}" tags="{}"'.format(word, ' '.join(ud_tags) if ud_tags else '[]')
+        raise ValueError(msg)
 
     def predict_stressed_charpos(self, word):
         """ Вернет индекс ударной буквы (это будет гласная, конечно). Отсчет от 0 """
@@ -407,6 +419,11 @@ class Accents:
         word = self.sanitize_word(word0)
         word = self.yoficate(word)
 
+        vowel_count = self.get_vowel_count(word)
+        if vowel_count == 1:
+            # Для слов, содержащих единственную гласную, сразу возвращаем позицию ударения на этой гласной
+            return 1
+
         if 'ё' in word:
             # считаем, что "ё" всегда ударная (исключение - слово "ёфикация" и однокоренные)
             n_vowels = 0
@@ -446,7 +463,6 @@ class Accents:
         if True:
             return self.predict_stress(word)
 
-        vowel_count = self.get_vowel_count(word)
         return (vowel_count + 1) // 2
 
     def get_phoneme(self, word):
@@ -549,6 +565,32 @@ def are_rhymed_syllables(syllab1, syllab2):
 def extract_ending_vc(s):
     # вернет последние буквы слова, среди которых минимум 1 гласная и 1 согласная
 
+    # неглиже
+    #      ^^
+    r = re.search('([жшщ])е$', s)
+    if r:
+        return r.group(1) + 'э'
+
+    # хороши
+    #     ^^
+    r = re.search('([жшщ])и$', s)
+    if r:
+        return r.group(1) + 'ы'
+
+    # иногда встречается в пирожках неорфрграфичная форма:
+    # щя
+    # ^^
+    r = re.search('([жшщ])я$', s)
+    if r:
+        return r.group(1) + 'а'
+
+    # иногда встречается в пирожках неорфрграфичная форма:
+    # трепещю
+    #      ^^
+    r = re.search('([жшщ])ю$', s)
+    if r:
+        return r.group(1) + 'ю'
+
     # МАМА
     #   ^^
     r = re.search('([бвгджзйклмнпрстфхцчшщ][уеыаоэёяию]+)$', s)
@@ -626,7 +668,7 @@ def are_phonetically_equal(s1, s2):
     return False
 
 
-def extract_ending_prononciation_after_stress(accents, word, stress):
+def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
     ending = None
     v_counter = 0
     for i, c in enumerate(word):
@@ -638,8 +680,32 @@ def extract_ending_prononciation_after_stress(accents, word, stress):
                     # ГУБА
                     #   ^^
                     ending = extract_ending_vc(word)
+
+                    # 01.02.2022 неударная "о" перед ударной гласной превращается в "а":  своя ==> сваЯ
+                    if ending[-2] == 'о' and ending[-1] in 'аеёиоуыэюя':
+                        ending = ending[:-2] + 'а' + ending[-1]
+
                 else:
                     ending = word[i:]
+                    if ud_tags is not None and ('ADJ' in ud_tags or 'DET' in ud_tags) and ending == 'ого':
+                        # Меняем "люб-ОГО" на "люб-ОВО"
+                        ending = 'ово'
+
+                    if ending.startswith('е'):
+                        # 01.02.2022 меняем ударную "е" на "э": летом==>л'Этом
+                        ending = 'э' + ending[1:]
+                    elif ending.startswith('я'):
+                        # 01.02.2022 меняем ударную "я" на "а": мячик==>м'Ачик
+                        ending = 'а' + ending[1:]
+                    elif ending.startswith('ё'):
+                        # 01.02.2022 меняем ударную "ё" на "о": мёдом==>м'Одом
+                        ending = 'о' + ending[1:]
+                    elif ending.startswith('ю'):
+                        # 01.02.2022 меняем ударную "ю" на "у": люся==>л'Уся
+                        ending = 'у' + ending[1:]
+                    elif ending.startswith('и'):
+                        # 01.02.2022 меняем ударную "и" на "ы": сливы==>сл'Ывы, живы==>жЫвы
+                        ending = 'ы' + ending[1:]
 
                 if len(ending) < len(word):
                     c2 = word[-len(ending)-1]
@@ -679,9 +745,35 @@ def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
     # для проверяемых слов.
     if pos1 == pos2:
         # Теперь все буквы, начиная с ударной гласной
-        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1)
-        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2)
+        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1)
+        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2)
 
+        return are_phonetically_equal(ending1, ending2)
+
+    return False
+
+
+def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
+    word1 = accentuator.yoficate(accentuator.sanitize_word(word1))
+    word2 = accentuator.yoficate(accentuator.sanitize_word(word2))
+
+    if (word1.lower(), word2.lower()) in accentuator.rhymed_words or (word2.lower(), word1.lower()) in accentuator.rhymed_words:
+        return True
+
+    vow_count1 = accentuator.get_vowel_count(word1)
+    pos1 = vow_count1 - stress1
+
+    vow_count2 = accentuator.get_vowel_count(word2)
+    pos2 = vow_count2 - stress2
+
+    # смещение ударной гласной от конца слова должно быть одно и то же
+    # для проверяемых слов.
+    if pos1 == pos2:
+        # Получаем клаузулы - все буквы, начиная с ударной гласной
+        ending1 = extract_ending_prononciation_after_stress(accentuator, word1, stress1, ud_tags1)
+        ending2 = extract_ending_prononciation_after_stress(accentuator, word2, stress2, ud_tags2)
+
+        # Фонетическое сравнение клаузул.
         return are_phonetically_equal(ending1, ending2)
 
     return False
