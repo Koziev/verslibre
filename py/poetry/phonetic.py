@@ -682,7 +682,7 @@ def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
                     ending = extract_ending_vc(word)
 
                     # 01.02.2022 неударная "о" перед ударной гласной превращается в "а":  своя ==> сваЯ
-                    if ending[-2] == 'о' and ending[-1] in 'аеёиоуыэюя':
+                    if len(ending) >= 2 and ending[-2] == 'о' and ending[-1] in 'аеёиоуыэюя':
                         ending = ending[:-2] + 'а' + ending[-1]
 
                 else:
