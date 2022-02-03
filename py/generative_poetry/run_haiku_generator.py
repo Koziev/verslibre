@@ -1,5 +1,7 @@
 """
 Модель для генерации хайку с помощью ruGPT-модели.
+
+01.02.2022 Отбраковываем генерации, в которых три строки повторяются (без учета финальных пунктуаторов).
 """
 
 import io
@@ -32,6 +34,24 @@ def get_user_id(update: Update) -> str:
     return user_id
 
 
+def remove_trailing_punct(s):
+    while s and s[-1] in '.?,!:;…-':
+        s = s[:-1].strip()
+    return s
+
+
+def is_good_haiku(s):
+    # 01.01.2022 отбраковываем генерации, в которых три строки повторяются:
+    # Лягушка прыгнула в пруд.
+    # Лягушка прыгнула в пруд.
+    # Лягушка прыгнула в пруд…
+    lines = [remove_trailing_punct(x.strip()) for x in s.split('\n')]
+    if lines[0] == lines[1] or lines[1] == lines[2] or lines[0] == lines[2]:
+        return False
+
+    return True
+
+
 LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
 MORE = 'Еще...'
@@ -53,8 +73,12 @@ def start(update, context) -> None:
                                        per_user=True)
 
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text='Привет, {}!\nЗадавайте тему в виде словосочетания из прилагательного и существительного.\nЛибо выберите готовую тему из предложенных'.format(update.message.from_user.full_name),
-                             reply_markup=reply_markup)
+                             text="Привет, {}!\n\nЯ - бот для генерации хайку (версия от 01.02.2022).\n".format(update.message.from_user.full_name) +\
+                             "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n\n"
+                             "Задавайте тему в виде сочетания прилагательного и существительного, например <i>морозный февраль</i>.\n"
+                             "Либо выберите готовую тему из предложенных (кнопки внизу).\n\n"
+                             "Кнопка [<b>Ещё</b>] выведет новый вариант хайку на заданную тему.",
+                             reply_markup=reply_markup, parse_mode='HTML')
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
 
@@ -124,19 +148,21 @@ def echo(update, context):
                 haiku = haiku.replace(' | ', '\n')
 
             if haiku.count('\n') == 2:
-                #captions = caption_generator.generate_output(haiku)
-                #caption = captions[0]
-                caption = '***'
-                p_plagiat = antiplagiat.score(haiku)
-                logging.info('HAIKU #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', ipoem, q, user_id, p_plagiat, haiku.replace('\n', ' | '))
-                if p_plagiat < 0.90:
-                    haikux2.append((caption, haiku))
+                if is_good_haiku(haiku):
+                    #captions = caption_generator.generate_output(haiku)
+                    #caption = captions[0]
+                    caption = '***'
+                    p_plagiat = antiplagiat.score(haiku)
+                    logging.info('HAIKU #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', ipoem, q, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                    if p_plagiat < 0.90:
+                        haikux2.append((caption, haiku))
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
 
         for ipoem, (caption, haiku) in enumerate(haikux2, start=0):
-            msg = '--- {} ---\n\n{}'.format(caption, haiku)
+            #msg = '--- {} ---\n\n{}'.format(caption, haiku)
+            msg = haiku
             if ipoem == 1:
                 last_user_poem[user_id] = (caption, haiku, msg)
             else:
@@ -173,6 +199,13 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
+    # НАЧАЛО ОТЛАДКИ
+    #haiku = 'Юные мысли, | Юные слова, | Юные мысли.'
+    #haiku = haiku.replace(' | ', '\n')
+    #b = is_good_haiku(haiku)
+    #print(b)
+    # КОНЕЦ ОТЛАДКИ
+
     parser = argparse.ArgumentParser(description='Telegram chatbot')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split())
@@ -268,14 +301,15 @@ if __name__ == '__main__':
                         haiku = haiku.replace(' | ', '\n')
 
                     if haiku.count('\n') == 2:
-                        #captions = caption_generator.generate_output(haiku)
-                        #caption = captions[0]
-                        caption = '***'
-                        print('HAIKU #{} for seed={}:'.format(ipoem, q))
-                        p_plagiat = antiplagiat.score(haiku)
-                        print('p_plagiat={}'.format(p_plagiat))
-                        print('--- {} ---\n'.format(caption))
-                        print(haiku)
-                        print('\n\n')
+                        if is_good_haiku(haiku):
+                            #captions = caption_generator.generate_output(haiku)
+                            #caption = captions[0]
+                            caption = '***'
+                            print('HAIKU #{} for seed={}:'.format(ipoem, q))
+                            p_plagiat = antiplagiat.score(haiku)
+                            print('p_plagiat={}'.format(p_plagiat))
+                            print('--- {} ---\n'.format(caption))
+                            print(haiku)
+                            print('\n\n')
 
                 print('')
