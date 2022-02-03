@@ -2,12 +2,14 @@
 Модель для генерации хайку с помощью ruGPT-модели.
 
 01.02.2022 Отбраковываем генерации, в которых три строки повторяются (без учета финальных пунктуаторов).
+03.02.2022 Отрисовка текста хайку в HTML с fixed-font, чтобы визуально они лучше выделялись в чате
 """
 
 import io
 import os
 import argparse
 import logging.handlers
+import re
 
 import numpy as np
 
@@ -49,7 +51,21 @@ def is_good_haiku(s):
     if lines[0] == lines[1] or lines[1] == lines[2] or lines[0] == lines[2]:
         return False
 
+    for line in lines:
+        # Ловим повторы типа: И солнце и солнце.
+        #                       ^^^^^^^^^^^^^^^
+        tokens = re.split(r'[.?,!:;…\-\s]', line)
+        for t1, t2, t3 in zip(tokens, tokens[1:], tokens[2:]):
+            if t1 == t3 and t1 not in ('еще', 'ещё', 'снова', 'вновь', 'сильнее') and t2 == 'и':
+                return False
+
     return True
+
+
+def render_haiku_html(haiku_txt):
+    # 03.02.2022 для отрисовки текста сгенерированного хайку в HTML формате в телеграмме
+    s = '<pre>' + haiku_txt + '</pre>'
+    return s
 
 
 LIKE = 'Нравится!'
@@ -73,7 +89,8 @@ def start(update, context) -> None:
                                        per_user=True)
 
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации хайку (версия от 01.02.2022).\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 03.02.2022).\n\n".format(update.message.from_user.full_name) +\
+                             "Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа. "
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n\n"
                              "Задавайте тему в виде сочетания прилагательного и существительного, например <i>морозный февраль</i>.\n"
                              "Либо выберите готовую тему из предложенных (кнопки внизу).\n\n"
@@ -104,16 +121,17 @@ def echo(update, context):
                                                resize_keyboard=True,
                                                per_user=True)
 
-            context.bot.send_message(chat_id=update.message.chat_id, text=last_user_poem[user_id][2],
-                                     reply_markup=reply_markup)
+            context.bot.send_message(chat_id=update.message.chat_id,
+                                     text=render_haiku_html(last_user_poem[user_id][2]),
+                                     reply_markup=reply_markup, parse_mode='HTML')
 
             return
 
         if update.message.text == LIKE:
             # Какой текст полайкали:
-            caption = last_user_poem[user_id][0]
+            #caption = last_user_poem[user_id][0]
             haiku = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('LIKE: caption="%s" haiku="%s"', caption, haiku)
+            logging.info('LIKE: haiku="%s"', haiku)
             context.bot.send_message(chat_id=update.message.chat_id, text="Спасибо :)")
 
             last_user_poem[user_id] = None
@@ -123,9 +141,9 @@ def echo(update, context):
 
         if update.message.text == DISLIKE:
             # Какой текст не понравился:
-            caption = last_user_poem[user_id][0]
+            #caption = last_user_poem[user_id][0]
             haiku = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('DISLIKE: caption="%s" haiku="%s"', caption, haiku)
+            logging.info('DISLIKE: haiku="%s"', haiku)
             context.bot.send_message(chat_id=update.message.chat_id, text="Понятно :(")
 
             last_user_poem[user_id] = None
@@ -180,8 +198,8 @@ def echo(update, context):
                                                per_user=True)
 
             context.bot.send_message(chat_id=update.message.chat_id,
-                                     text=last_user_poem[user_id][2],
-                                     reply_markup=reply_markup)
+                                     text=render_haiku_html(last_user_poem[user_id][2]),
+                                     reply_markup=reply_markup, parse_mode='HTML')
         else:
             keyboard = [generate_seeds(user_id)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
@@ -200,7 +218,7 @@ def echo(update, context):
 
 if __name__ == '__main__':
     # НАЧАЛО ОТЛАДКИ
-    #haiku = 'Юные мысли, | Юные слова, | Юные мысли.'
+    #haiku = 'Пруд и лягушки, | Дождик и ветер, | И солнце и солнце.'
     #haiku = haiku.replace(' | ', '\n')
     #b = is_good_haiku(haiku)
     #print(b)
