@@ -5,7 +5,7 @@
 22-12-2021 Добавлена рифмовка AABB
 28-12-2021 Добавлены еще штрафы за всякие нехорошие с точки зрения вокализма ситуации в строке, типа 6 согласных подряд в смежных словах "пёстр страх"
 23-01-2022 Добавлен код для словосочетаний с вариативным ударением типа "пО лесу | по лЕсу"
-26-01-2022 # Если слово допускает альтернативные ударения по списку и теги не позволяют сделать выбор, то берем первое ударение, а не бросаем исключение.
+26-01-2022 Если слово допускает альтернативные ударения по списку и теги не позволяют сделать выбор, то берем первое ударение, а не бросаем исключение.
 """
 
 import collections
@@ -15,9 +15,7 @@ import os
 import io
 import math
 import jellyfish
-import hyperopt
 import re
-from hyperopt import hp, tpe, STATUS_OK, Trials
 
 from poetry.phonetic import Accents, rhymed2
 from generative_poetry.udpipe_parser import UdpipeParser
@@ -27,20 +25,18 @@ from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.whitespace_normalization import normalize_whitespaces
 
 
-# алгоритм сэмплирования гиперпараметров
-HYPEROPT_ALGO = tpe.suggest  # tpe.suggest OR hyperopt.rand.suggest
 
-
+# Коэффициенты для штрафов за разные отступления от идеальной метрики.
 COEFF = dict()
 COEFF['@68'] = 0.5
 COEFF['@68_2'] = 0.95
 COEFF['@71'] = 1.0
-COEFF['@75'] = 0.9  # 0.8
+COEFF['@75'] = 0.9
 COEFF['@77'] = 1.0
 COEFF['@77_2'] = 1.0
 COEFF['@79'] = 1.0
 COEFF['@126'] = 0.98
-COEFF['@225'] = 0.95  #0.9
+COEFF['@225'] = 0.95
 COEFF['@143'] = 0.9
 
 
@@ -507,6 +503,8 @@ class PoetryAlignment(object):
         return lx
 
 
+# Мы проверяем только эти 5 вариантов чередования ударных и безударных слогов.
+# Более сложные случаи отбрасываем, они слишком тяжелы для восприятия.
 meters = [('хорей', (1, 0)),
           ('ямб', (0, 1)),
           ('дактиль', (1, 0, 0)),
@@ -570,6 +568,7 @@ class CollocationStress(object):
                         return new_variant
 
         raise ValueError('Inconsistent call of CollocationStress::produce_stressed_line')
+
 
 class PoetryStressAligner(object):
     def __init__(self, udpipe, accentuator, data_dir):
@@ -995,29 +994,6 @@ class PoetryStressAligner(object):
 
         return False
 
-hp_trial_count = 0
-hp_cur_best = 0.0
-
-def objective(space):
-    # Целевая функция для hyperopt
-
-    global COEFF, hp_trial_count, hp_cur_best
-    COEFF = space
-
-    hp_trial_count += 1
-
-    total_score = 0.0
-    for poem in good_poems:
-        alignment = aligner.align(poem)
-        total_score += alignment.score
-
-    print('Hyperopt trial#{} total_score={} hp_cur_best={}'.format(hp_trial_count, total_score, hp_cur_best))
-    if total_score > hp_cur_best:
-        print('\n!!! NEW BEST SCORE={} for params={}\n'.format(total_score, space))
-        hp_cur_best = total_score
-
-    return {'loss': -total_score, 'status': STATUS_OK}
-
 
 if __name__ == '__main__':
     data_dir = '../../data'
@@ -1053,19 +1029,3 @@ if __name__ == '__main__':
         print(pline.stress_signature_str)
 
     print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
-
-    exit(0)
-
-    # =============================================
-
-    pline = PoetryLine.build('Ветер, ветер, ты могуч', udpipe, accents)
-    print(pline)
-
-    print('='*60)
-    vx = pline.get_stress_variants()
-    for line_variant in vx:
-        print(str(line_variant))
-
-    print('='*60)
-
-    exit(0)
