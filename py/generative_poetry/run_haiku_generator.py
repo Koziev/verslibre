@@ -3,6 +3,7 @@
 
 01.02.2022 Отбраковываем генерации, в которых три строки повторяются (без учета финальных пунктуаторов).
 03.02.2022 Отрисовка текста хайку в HTML с fixed-font, чтобы визуально они лучше выделялись в чате
+04.02.2022 Изменился API генерации затравок: теперь это класс SeedGenerator
 """
 
 import io
@@ -19,7 +20,7 @@ from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardBu
 
 from rugpt_generator import RugptGenerator
 from antiplagiat import Antiplagiat
-from poetry_seeds import generate_seeds
+from poetry_seeds import SeedGenerator
 from init_logging import init_logging
 
 
@@ -80,7 +81,7 @@ def start(update, context) -> None:
     user_id = get_user_id(update)
     logging.debug('Entering START callback with user_id=%s', user_id)
 
-    seeds = generate_seeds(user_id)
+    seeds = seed_generator.generate_seeds(user_id)
 
     keyboard = [seeds]
     reply_markup = ReplyKeyboardMarkup(keyboard,
@@ -114,7 +115,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -190,7 +191,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -201,7 +202,7 @@ def echo(update, context):
                                      text=render_haiku_html(last_user_poem[user_id][2]),
                                      reply_markup=reply_markup, parse_mode='HTML')
         else:
-            keyboard = [generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
@@ -251,6 +252,8 @@ if __name__ == '__main__':
         telegram_token = args.token
         if len(telegram_token) == 0:
             telegram_token = input('Enter Telegram token:> ').strip()
+
+    seed_generator = SeedGenerator(models_dir)
 
     #tokenizer = rutokenizer.Tokenizer()
     #tokenizer.load()
