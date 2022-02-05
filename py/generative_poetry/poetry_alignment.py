@@ -182,6 +182,12 @@ class PoetryWord(object):
             # Мо́жет что́ - нибу́дь напла́чу
             #             ~~~~~~
             variants.append(WordStressVariant(self, -1, 1.0))
+        elif uform == 'нет' and not self.is_rhyming_word:
+            # частицу (или глагол для Stanza) "нет" с ударением штрафуем
+            variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
+
+            # а вариант без ударения - с нормальным скором:
+            variants.append(WordStressVariant(self, -1, COEFF['@71']))
         elif self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ'):
             if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во') and self.upos == 'ADP':
                 # эти предлоги никогда не делаем ударными
@@ -244,6 +250,9 @@ class PoetryWord(object):
         # ...
 
         return variants
+
+    def get_first_stress_variant(self):
+        return WordStressVariant(self, self.stress_pos, 1.0)
 
 
 def sum1(arr):
@@ -428,13 +437,76 @@ class PoetryLine(object):
                 pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos)
                 pline.pwords.append(pword)
 
-        # Отмечаем последнее слово в строке, так как должно ударяться, за исключением
+        pline.locate_rhyming_word()
+        return pline
+
+    @staticmethod
+    def build_from_markup(markup_line, parser):
+        pline = PoetryLine()
+        pline.text = markup_line.replace('\u0301', '')
+        pline.pwords = []
+
+        text2 = markup_line
+        for c in '.,?!:;…-–—«»”“„‘’`"':
+            text2 = text2.replace(c, ' ' + c + ' ').replace('  ', ' ')
+
+        # Надо поискать в исходной размеченной строке наше слово. Одинаковое слово может встретится 2 раза с разной
+        # разметкой.
+        line_spans = [(span.replace('\u0301', ''), span) for span in re.split(r'[.?,!:;…\-\s]', markup_line)]
+
+        # удаляем расставленные ударения и выполняем полный анализ.
+        parsings = parser.parse_text(text2.replace('\u0301', ''))
+
+        for parsing in parsings:
+            for ud_token in parsing:
+                # определяем позицию гласного, помеченного как ударный.
+                stress_pos = -1
+
+                n_vowels = 0
+                for ic, c in enumerate(ud_token.form):
+                    if c.lower() in 'уеыаоэёяию':
+                        # Нашли гласную. попробуем сделать ее ударной (поставить справа юникодный маркер ударения)
+                        # и поискать в исходной разметке.
+                        n_vowels += 1
+                        needle = ud_token.form[:ic+1] + '\u0301' + ud_token.form[ic+1:]
+                        # Ищем слева направо в сегментах с разметкой. Если слово найдется в сегменте, то его
+                        # исключим из дальнейшего поиска, чтобы справится с ситуацией разного ударения в одинаковых словах.
+                        for ispan, (span_form, span_markup) in enumerate(line_spans):
+                            if span_form == ud_token.form and span_markup == needle:
+                                stress_pos = n_vowels
+                                line_spans = line_spans[:ispan] + line_spans[ispan+1:]
+                                break
+
+                        if stress_pos == -1:
+                            # могут быть MWE с дефисом, которые распались на отдельные слова. Их ищем в исходной
+                            # разметке целиком.
+                            if re.search(r'\b' + needle.replace('-', '\\-').replace('.', '\\.') + r'\b', markup_line):
+                                stress_pos = n_vowels
+                                break
+
+                        if stress_pos != -1:
+                            break
+
+                pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos)
+                pline.pwords.append(pword)
+
+        pline.locate_rhyming_word()
+        return pline
+
+    def locate_rhyming_word(self):
+        # Отмечаем последнее слово в строке, так как оно должно ударяться, за исключением
         # очень редких случаев:
         # ... я же
         # ... ляжет
-        pline.pwords[-1].is_rhyming_word = True
-
-        return pline
+        located = False
+        for pword in self.pwords[::-1]:
+            if pword.upos != 'PUNCT':
+                pword.is_rhyming_word = True
+                located = True
+                break
+        if not located:
+            msg = 'Could not locate rhyming word in line ' + self.text
+            raise ValueError(msg)
 
     def __repr__(self):
         return ' '.join([pword.__repr__() for pword in self.pwords])
@@ -461,11 +533,9 @@ class PoetryLine(object):
 
         return variants
 
-    #def get_last_rhyming_word(self):
-    #    for pword in self.pwords[::-1]:
-    #        if pword.upos != 'PUNCT':
-    #            return pword
-    #    return None
+    def get_first_stress_variants(self, aligner):
+        swords = [pword.get_first_stress_variant() for pword in self.pwords]
+        return LineStressVariant(self, swords, aligner)
 
 
 class PoetryAlignment(object):
@@ -701,7 +771,7 @@ class PoetryStressAligner(object):
         elif len(lines) == 1:
             return self.align1(lines)
         else:
-            raise NotImplementedError()
+            raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
 
     def check_rhyming(self, poetry_word1, poetry_word2):
         #return rhymed(self.accentuator,
@@ -903,6 +973,18 @@ class PoetryStressAligner(object):
         # Возвращаем найденный вариант разметки и его оценку
         return PoetryAlignment(best_variant, best_score, best_meter, rhyme_scheme='')
 
+    def build_from_markup(self, text):
+        lines = text.split('\n')
+
+        plines = [PoetryLine.build_from_markup(line, self.udpipe) for line in lines]
+        stressed_lines = [pline.get_first_stress_variants(self) for pline in plines]
+
+        mapped_meter, mapping_score = self.map_meters(stressed_lines)
+        score = mapping_score * reduce(lambda x, y: x * y, [l.get_score() for l in stressed_lines])
+
+        return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme='')
+
+
     def detect_repeating(self, alignment):
         # Иногда генеративная модель выдает повторы существтельных типа "любовь и любовь" в одной строке.
         # Такие генерации выглядят криво.
@@ -1012,6 +1094,11 @@ if __name__ == '__main__':
 
     x = accents.get_accent('самоцветы')
     print(x)
+
+    # ================================================
+
+    alignment = aligner.build_from_markup('Без му́́ки не́т и нау́ки.')
+    print('\n' + alignment.get_stressed_lines() + '\n')
 
     # ================================================
 
