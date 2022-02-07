@@ -63,8 +63,8 @@ from generative_poetry.poetry_alignment import PoetryStressAligner
 from generative_poetry.experiments.rugpt_with_stress.break_to_syllables import break_to_syllables
 from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.experiments.rugpt_with_stress.stressed_gpt_tokenizer import StressedGptTokenizer
-from poetry_seeds import generate_seeds
 from generative_poetry.whitespace_normalization import normalize_whitespaces
+from poetry_seeds import SeedGenerator
 
 
 def sample_v2(
@@ -563,9 +563,9 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 01.02.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 07.02.2022).\n" +
                                   "Если нужны хайку, попробуйте @haiku_guru_bot.\n\n" +
-                                  "Выберите формат генерируемых стихов:\n",
+                                  "Выберите формат сочиняемых стихов:\n",
                              reply_markup=reply_markup)
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
@@ -589,7 +589,7 @@ def echo(update, context):
 
             logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
 
-            seeds = generate_seeds(user_id)
+            seeds = seed_generator.generate_seeds(user_id)
             keyboard = [seeds]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -627,7 +627,7 @@ def echo(update, context):
         format = user_format.get(user_id, 'стих')
 
         if update.message.text == NEW:
-            keyboard = [generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
@@ -683,7 +683,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -721,7 +721,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE]]
             else:
-                keyboard = [[LIKE, DISLIKE], generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -732,7 +732,7 @@ def echo(update, context):
                                      text=last_user_poem[user_id],
                                      reply_markup=reply_markup)
         else:
-            keyboard = [generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
@@ -763,6 +763,8 @@ if __name__ == '__main__':
     models_dir = os.path.expanduser(args.models_dir)
 
     init_logging(args.log, True)
+
+    seed_generator = SeedGenerator(models_dir)
 
     poem_generator = RugptGenerator()
     poem_generator.load(os.path.join(models_dir, 'stressed_poetry_generator'))
@@ -815,7 +817,7 @@ if __name__ == '__main__':
         n_empty_generations = 0  # кол-во затравок, для которых генератор не выдал ни одной генерации
 
         for _ in tqdm.tqdm(range(n_runs), total=n_runs):
-            for seed in generate_seeds('evaluation'):
+            for seed in seed_generator.generate_seeds('evaluation'):
                 ranked_poems = generate_poems('стих', seed, score_threshold=0.01, verbosity=0)
                 if len(ranked_poems) == 0:
                     n_empty_generations += 1
@@ -835,7 +837,7 @@ if __name__ == '__main__':
         n_runs = 1000
         with io.open(os.path.join(tmp_dir, 'stressed_gpt_poetry_generation_v2.output.txt'), 'w', encoding='utf-8') as wrt:
             for _ in tqdm.tqdm(range(n_runs), total=n_runs):
-                for seed in generate_seeds('generation'):
+                for seed in seed_generator.generate_seeds('generation'):
                     ranked_poems = generate_poems('стих', seed, score_threshold=0.20, verbosity=0)
                     for poem, score in ranked_poems[:5]:
                         wrt.write('score={:5.3f}\n'.format(score))
