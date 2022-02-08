@@ -1044,9 +1044,9 @@ class PoetryStressAligner(object):
                 if (word1.poetry_word.form.lower(), word2.poetry_word.form.lower()) in self.accentuator.rhymed_words:
                     continue
 
-                if word1.poetry_word.form.endswith(word2.poetry_word.form):
+                if word1.poetry_word.form.endswith(word2.poetry_word.form.lower()):
                     return True
-                elif word2.poetry_word.form.endswith(word1.poetry_word.form):
+                elif word2.poetry_word.form.endswith(word1.poetry_word.form.lower()):
                     return True
 
         # Для других частей речи проверяем заданные группы слов.
