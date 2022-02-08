@@ -999,13 +999,13 @@ class PoetryStressAligner(object):
 
             # любой повтор XXX XXX
             for w1, w2 in zip(pline.poetry_line.pwords, pline.poetry_line.pwords[1:]):
-                if w1.form.lower() == w2.form.lower():
+                if w1.form.lower() == w2.form.lower() and w1.form[0] not in '.!?':
                     return True
 
             # также штрафуем за паттерн "XXX и XXX"
             for w1, w2, w3 in zip(pline.poetry_line.pwords, pline.poetry_line.pwords[1:], pline.poetry_line.pwords[2:]):
                 if w2.form in ('и', ',', 'или', 'иль', 'аль', 'да'):
-                    if w1.form.lower() == w3.form.lower():
+                    if w1.form.lower() == w3.form.lower() and w1.form[0] not in '.!?':
                         return True
 
         return False
