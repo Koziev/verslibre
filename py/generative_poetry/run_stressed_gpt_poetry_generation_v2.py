@@ -8,6 +8,7 @@ End-2-end генерация рифмованного четверостишья
 14-12-2021 Добавлен код для автоматической пакетной оценки качества генерации.
 18-12-2021 Добавлена коррекция пробелов после декодера, модуль whitespace_normalization
 27-01-2022 Эксперимент с управлением форматом генерации с помощью тегов [стих | одностишье | двустишье | порошок]
+08.02.2022 В ранжирование результатов генерации добавлена проверка бедной рифмовки (включая повторение рифмуемого слова)
 """
 
 import os
@@ -508,6 +509,16 @@ def generate_poems(format, topic, verbosity=1):
                     if aligner.detect_repeating(a):
                         # 13-01-2022 штрафуем за повторы
                         score *= 0.1
+                        logging.warning('Repetition detected: %s', a.get_unstressed_lines().replace('\n', ' | '))
+
+                    if aligner.detect_poor_poetry(a):
+                        # скучные рифмы и повторы рифмуемого слова:
+                        # В садах следы цветущих елей
+                        #                        ^^^^
+                        # Следы невиданных дубов и елей.
+                        #                          ^^^^
+                        score *= 0.1
+                        logging.warning('Poor poetry detected: %s', a.get_unstressed_lines().replace('\n', ' | '))
 
             except Exception as e:
                 logging.error('Exception: %s', str(e) + '\n' + traceback.format_exc() + '\n')
@@ -563,7 +574,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 07.02.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 08.02.2022).\n" +
                                   "Если нужны хайку, попробуйте @haiku_guru_bot.\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
                              reply_markup=reply_markup)
