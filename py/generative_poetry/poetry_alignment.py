@@ -62,6 +62,10 @@ class WordStressVariant(object):
         self.is_cyrillic = self.poetry_word.form[0].lower() in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'
         self.stressed_form = ''.join(output)
 
+    @property
+    def form(self):
+        return self.poetry_word.form
+
     def build_stressed(self, new_stress_pos):
         return WordStressVariant(self.poetry_word, new_stress_pos, self.score)
 
@@ -1013,9 +1017,9 @@ class PoetryStressAligner(object):
     def detect_poor_poetry(self, alignment):
         """Несколько эвристик для обнаружения скучных рифм, которые мы не хотим получать"""
 
-        last_words = [pline.poetry_line.pwords[-1].form.lower() for pline in alignment.poetry_lines]
+        last_words = [pline.get_last_rhyming_word().form.lower() for pline in alignment.poetry_lines]
 
-        # Если два глагольных оконания, причем одно является хвостом другого - это бедная рифма:
+        # Если два глагольных окончания, причем одно является хвостом другого - это бедная рифма:
         # ждать - подождать
         # смотреть - посмотреть
         # etc.
