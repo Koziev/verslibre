@@ -54,7 +54,7 @@ from transformers.generation_stopping_criteria import (
 )
 
 import telegram
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
 from init_logging import init_logging
@@ -566,19 +566,80 @@ def start(update, context) -> None:
     user_id = get_user_id(update)
     logging.debug('Entering START callback with user_id=%s', user_id)
 
-    keyboard = [[FORMAT__COMMON], [FORMAT__POROSHKI], [FORMAT__2LINER], [FORMAT__1LINER]]
+    #keyboard = [[FORMAT__COMMON], [FORMAT__POROSHKI], [FORMAT__2LINER], [FORMAT__1LINER]]
+    #reply_markup = ReplyKeyboardMarkup(keyboard,
+    #                                   one_time_keyboard=True,
+    #                                   resize_keyboard=True,
+    #                                   per_user=True)
+    keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
+                [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
+                [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
+                [InlineKeyboardButton(FORMAT__1LINER, callback_data='format='+FORMAT__1LINER)],
+                ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    context.bot.send_message(chat_id=update.message.chat_id,
+                             text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
+                                  "Я - бот для генерации стихов (версия от 08.02.2022).\n" +
+                                  "Для генерации хайку попробуйте @haiku_guru_bot.\n" +
+                                  "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
+                                  "Выберите формат сочиняемых стихов:\n",
+                             reply_markup=reply_markup)
+    logging.debug('Leaving START callback with user_id=%s', user_id)
+
+
+def dbg_actions(update, context):
+    pass # TODO ...
+    return
+
+
+def format_menu(context, callback_data):
+    user_id = str(context.effective_user.id)
+    format = callback_data.match.string.split('=')[1]
+
+    if format == FORMAT__COMMON:
+        user_format[user_id] = 'четверостишье'
+    elif format == FORMAT__1LINER:
+        user_format[user_id] = 'одностишье'
+    elif format == FORMAT__2LINER:
+        user_format[user_id] = 'двустишье'
+    elif format == FORMAT__POROSHKI:
+        user_format[user_id] = 'порошок'
+
+    logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
+
+    seeds = seed_generator.generate_seeds(user_id)
+    keyboard = [seeds]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
                                        resize_keyboard=True,
                                        per_user=True)
 
-    context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 08.02.2022).\n" +
-                                  "Если нужны хайку, попробуйте @haiku_guru_bot.\n\n" +
-                                  "Выберите формат сочиняемых стихов:\n",
-                             reply_markup=reply_markup)
-    logging.debug('Leaving START callback with user_id=%s', user_id)
+    if user_format[user_id] == 'порошок':
+        help_text = 'Включен режим <b>пирожков</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Порошки, пирожки и депрессяшки это особые жанры. В этих стихах 1) всегда четыре строки 2) часто нет рифмы, 3) нет знаков препинания, ' \
+                    '4) все слова пишутся с маленькой буквы, 5) бывает лексика и темы 18+ 6) есть юмор и стёб.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'и я сочиню пирожок с этими словами. '
+    elif user_format[user_id] == 'двустишье':
+        help_text = 'Включен режим <b>полупирожков-двустрочников</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'В этих стихах часто нет рифмы, бывает лексика 18+.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'и я сочиню двустрочник с этими словами. '
+    elif user_format[user_id] == 'четверостишье':
+        help_text = 'Включен режим <b>обычных стихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'и я сочиню стишок с этими словами. '
+    else:
+        help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'и я сочиню стишок-однострочник с этими словами. '
+
+    help_text += 'Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n' \
+                 'Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему.'
+
+    context.callback_query.message.reply_text(text=help_text, reply_markup=reply_markup, parse_mode='HTML')
+    return
 
 
 def echo(update, context):
@@ -588,54 +649,8 @@ def echo(update, context):
         user_id = get_user_id(update)
 
         msg_text = update.message.text
-        if update.message.text in (FORMAT__COMMON, FORMAT__1LINER, FORMAT__2LINER, FORMAT__POROSHKI):
-            if msg_text == FORMAT__COMMON:
-                user_format[user_id] = 'четверостишье'
-            elif msg_text == FORMAT__1LINER:
-                user_format[user_id] = 'одностишье'
-            elif msg_text == FORMAT__2LINER:
-                user_format[user_id] = 'двустишье'
-            elif msg_text == FORMAT__POROSHKI:
-                user_format[user_id] = 'порошок'
 
-            logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
-
-            seeds = seed_generator.generate_seeds(user_id)
-            keyboard = [seeds]
-            reply_markup = ReplyKeyboardMarkup(keyboard,
-                                               one_time_keyboard=True,
-                                               resize_keyboard=True,
-                                               per_user=True)
-
-
-            if user_format[user_id] == 'порошок':
-                help_text = 'Включен режим <b>пирожков</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                            'Порошки, пирожки и депрессяшки это особые жанры. В этих стихах 1) всегда четыре строки 2) часто нет рифмы, 3) нет знаков препинания, ' \
-                            '4) все слова пишутся с маленькой буквы, 5) бывает лексика и темы 18+ 6) есть юмор и стёб.\n\n' \
-                            'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
-                            'и я сочиню пирожок с этими словами. '
-            elif user_format[user_id] == 'двустишье':
-                help_text = 'Включен режим <b>полупирожков-двустрочников</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                            'В этих стихах часто нет рифмы, бывает лексика 18+.\n\n' \
-                            'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
-                            'и я сочиню двустрочник с этими словами. '
-            elif user_format[user_id] == 'четверостишье':
-                help_text = 'Включен режим <b>обычных стихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                            'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
-                            'и я сочиню стишок с этими словами. '
-            else:
-                help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                            'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
-                            'и я сочиню стишок-однострочник с этими словами. '
-
-            help_text +=    'Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n' \
-                            'Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему.'
-
-
-            context.bot.send_message(chat_id=update.message.chat_id, text=help_text, reply_markup=reply_markup, parse_mode='HTML')
-            return
-
-        format = user_format.get(user_id, 'стих')
+        format = user_format.get(user_id, 'четверостишье')
 
         if update.message.text == NEW:
             keyboard = [seed_generator.generate_seeds(user_id)]
@@ -811,8 +826,14 @@ if __name__ == '__main__':
         start_handler = CommandHandler('start', start)
         dispatcher.add_handler(start_handler)
 
-        echo_handler = MessageHandler(Filters.text, echo)
+        echo_handler = MessageHandler(Filters.text & ~Filters.command, echo)
         dispatcher.add_handler(echo_handler)
+
+        command_handler = MessageHandler(Filters.all, dbg_actions)
+        dispatcher.add_handler(command_handler)
+        #dispatcher.add_handler(CallbackQueryHandler(dbg_actions))
+
+        updater.dispatcher.add_handler(CallbackQueryHandler(format_menu, pattern='format=(.*)'))
 
         logging.getLogger('telegram.bot').setLevel(logging.INFO)
         logging.getLogger('telegram.vendor.ptb_urllib3.urllib3.connectionpool').setLevel(logging.INFO)
