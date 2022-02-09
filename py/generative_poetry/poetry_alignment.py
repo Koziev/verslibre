@@ -1009,7 +1009,7 @@ class PoetryStressAligner(object):
             # также штрафуем за паттерн "XXX и XXX"
             for w1, w2, w3 in zip(pline.poetry_line.pwords, pline.poetry_line.pwords[1:], pline.poetry_line.pwords[2:]):
                 if w2.form in ('и', ',', 'или', 'иль', 'аль', 'да'):
-                    if w1.form.lower() == w3.form.lower() and w1.form[0] not in '.!?':
+                    if w1.form.lower() == w3.form.lower() and w1.form[0] not in '. ! ? вновь еще ещё снова опять'.split(' '):
                         return True
 
         return False
@@ -1041,12 +1041,14 @@ class PoetryStressAligner(object):
             if word1.poetry_word.upos == 'VERB' and word2.poetry_word.upos == 'VERB':
                 # 11-01-2022 если пара слов внесена в специальный список рифмующихся слов, то считаем,
                 # что тут все нормально:  ВИТАЮ-ТАЮ
-                if (word1.poetry_word.form.lower(), word2.poetry_word.form.lower()) in self.accentuator.rhymed_words:
+                form1 = word1.poetry_word.form.lower()
+                form2 = word2.poetry_word.form.lower()
+                if (form1, form2) in self.accentuator.rhymed_words:
                     continue
 
-                if word1.poetry_word.form.endswith(word2.poetry_word.form.lower()):
+                if form1.endswith(form2):
                     return True
-                elif word2.poetry_word.form.endswith(word1.poetry_word.form.lower()):
+                elif form2.endswith(form1):
                     return True
 
         # Для других частей речи проверяем заданные группы слов.
