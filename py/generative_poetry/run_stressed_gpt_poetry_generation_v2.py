@@ -9,6 +9,7 @@ End-2-end генерация рифмованного четверостишья
 18-12-2021 Добавлена коррекция пробелов после декодера, модуль whitespace_normalization
 27-01-2022 Эксперимент с управлением форматом генерации с помощью тегов [стих | одностишье | двустишье | порошок]
 08.02.2022 В ранжирование результатов генерации добавлена проверка бедной рифмовки (включая повторение рифмуемого слова)
+21.02.2022 Добавлена модель генерации следующих 4х строчек по первому четверостишью.
 """
 
 import os
@@ -344,6 +345,10 @@ def sample_v2(
         if eos_token_id is not None:
             unfinished_sequences = unfinished_sequences.mul((next_tokens != eos_token_id).long())
 
+        if unfinished_sequences.shape[0] == 0 or input_ids.shape[0] == 0:
+            #print('DEBUG@350')
+            break
+
         # stop when each sentence is finished, or if we exceed the maximum length
         if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
             if not synced_gpus:
@@ -436,6 +441,56 @@ class RugptGenerator:
         return list(generated_sequences)
 
 
+class RugptGenerator8(RugptGenerator):
+    def generate_output(self, context, num_return_sequences=10, temperature=1.0):
+        top_k = 30
+        top_p = 0.85
+        repetition_penalty = 1.0
+        prompt_text = "<s> " + context + ' <nl>\n'
+        stop_token = "</s>"
+        length = 150
+
+        encoded_prompt = self.tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
+        encoded_prompt = encoded_prompt.to(self.device)
+
+        output_sequences = self.model.generate(
+            input_ids=encoded_prompt,
+            max_length=length + len(encoded_prompt[0]),
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            do_sample=True,
+            #num_beams=5,
+            #num_beam_groups=5,
+            num_return_sequences=num_return_sequences,
+            pad_token_id=0
+        )
+
+        # Remove the batch dimension when returning multiple sequences
+        if len(output_sequences.shape) > 2:
+            output_sequences.squeeze_()
+
+        generated_sequences = set()
+        for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
+            generated_sequence = generated_sequence.tolist()[encoded_prompt.shape[1]:]
+
+            # Decode text
+            text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
+
+            # Remove all text after the stop token
+            if stop_token in text:
+                text = text[: text.find(stop_token)]
+
+            # Add the prompt at the beginning of the sequence. Remove the excess text that was used for pre-processing
+            #total_sequence = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
+            #total_sequence = total_sequence.strip().replace('<pad>', '')
+            #generated_sequences.add(total_sequence)
+            generated_sequences.add(text.strip().replace('<pad>', ''))
+
+        return list(generated_sequences)
+
+
 def decode_line2(line0, remove_stress_marks=True):
     out_words = []
 
@@ -455,17 +510,10 @@ def decode_line2(line0, remove_stress_marks=True):
     return s
 
 
-def generate_poems(format, topic, verbosity=1):
+def generate_poems(format, topic, verbosity=1, num_return_sequences=30):
     try:
-        if format == '1->234':
-            headlines = [(line[0].upper() + line[1:]) for line in topic.split('\n')]
-            encoded_headlines = [arabize(break_to_syllables(udpipe, accents, line)) for line in headlines]
-            encoded_seed = ' <nl> '.join(encoded_headlines)
-            prompt = '{} <nl>'.format(encoded_seed)
-            poems = poem234_generator.generate_output(prompt, num_return_sequences=30)
-        else:
-            seed = arabize(break_to_syllables(udpipe, accents, format + ' , ' + topic))
-            poems = poem_generator.generate_output(seed, num_return_sequences=30)
+        seed = arabize(break_to_syllables(udpipe, accents, format + ' , ' + topic))
+        poems = poem_generator.generate_output(seed, num_return_sequences=num_return_sequences)
     except Exception as ex:
         logging.error(ex)
         return []
@@ -475,7 +523,7 @@ def generate_poems(format, topic, verbosity=1):
     # ===============================================================
     ranked_poems = []
 
-    if format in ('четверостишье', '1->234'):
+    if format == 'четверостишье':
         do_check_rhymes = True
         score_threshold = 0.05
         lines_count = 4
@@ -495,9 +543,6 @@ def generate_poems(format, topic, verbosity=1):
 
     for ipoem, poem in enumerate(poems):
         lines = [decode_line2(line) for line in poem.split('<nl>') if len(line) > 0]
-
-        if format == '1->234':
-            lines = headlines + lines
 
         if len(lines) == lines_count:
             score = 0.0
@@ -542,6 +587,25 @@ def generate_poems(format, topic, verbosity=1):
     return ranked_poems
 
 
+def continue8(poem_lines):
+    """Для формата генерации обычных стихов добавляем 4 новые строки с помощью
+     отдельной модели.
+     Возвращается 9 строк, включая пустую разделительную строку между первыми и вторыми 4мя строками"""
+    try:
+        encoded_headlines = [arabize(break_to_syllables(udpipe, accents, line)) for line in poem_lines]
+        encoded_seed = ' <nl> '.join(encoded_headlines)
+        next_lines = poem8_generator.generate_output(encoded_seed, num_return_sequences=1)
+        if next_lines:
+            next_lines = [decode_line2(line) for line in next_lines[0].split('<nl>') if len(line) > 0]
+            poem8 = poem_lines + [''] + next_lines
+            return poem8
+    except Exception as ex:
+        logging.error(ex)
+        logging.error(traceback.format_exc())
+
+    return poem_lines
+
+
 def get_user_id(update: Update) -> str:
     user_id = str(update.message.from_user.id)
     return user_id
@@ -580,7 +644,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 08.02.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 21.02.2022).\n" +
                                   "Для генерации хайку попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
@@ -619,7 +683,7 @@ def format_menu(context, callback_data):
         help_text = 'Включен режим <b>пирожков</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
                     'Порошки, пирожки и депрессяшки это особые жанры. В этих стихах 1) всегда четыре строки 2) часто нет рифмы, 3) нет знаков препинания, ' \
                     '4) все слова пишутся с маленькой буквы, 5) бывает лексика и темы 18+ 6) есть юмор и стёб.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
                     'и я сочиню пирожок с этими словами. '
     elif user_format[user_id] == 'двустишье':
         help_text = 'Включен режим <b>полупирожков-двустрочников</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
@@ -628,11 +692,11 @@ def format_menu(context, callback_data):
                     'и я сочиню двустрочник с этими словами. '
     elif user_format[user_id] == 'четверостишье':
         help_text = 'Включен режим <b>обычных стихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
                     'и я сочиню стишок с этими словами. '
     else:
         help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>синица</i>, ' \
                     'и я сочиню стишок-однострочник с этими словами. '
 
     help_text += 'Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n' \
@@ -648,7 +712,7 @@ def echo(update, context):
     try:
         user_id = get_user_id(update)
 
-        msg_text = update.message.text
+        #msg_text = update.message.text
 
         format = user_format.get(user_id, 'четверостишье')
 
@@ -703,6 +767,9 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
+            if format == 'четверостишье':
+                poem = '\n'.join(continue8(poem.split('\n')))
+
             last_user_poem[user_id] = poem
             last_user_poems[user_id] = last_user_poems[user_id][:-1]
 
@@ -739,6 +806,9 @@ def echo(update, context):
 
         for ipoem, (poem, score) in enumerate(poems2, start=1):
             if ipoem == 1:
+                if format == 'четверостишье':
+                    poem = '\n'.join(continue8(poem.split('\n')))
+
                 last_user_poem[user_id] = poem
             else:
                 last_user_poems[user_id].append(poem)
@@ -775,7 +845,7 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre generator v.9')
+    parser = argparse.ArgumentParser(description='Verslibre generator v.10')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram evaluate generate'.split())
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
@@ -795,8 +865,8 @@ if __name__ == '__main__':
     poem_generator = RugptGenerator()
     poem_generator.load(os.path.join(models_dir, 'stressed_poetry_generator'))
 
-    #poem234_generator = RugptGenerator()
-    #poem234_generator.load(os.path.join(models_dir, 'stressed_234_generator'))
+    poem8_generator = RugptGenerator8()
+    poem8_generator.load(os.path.join(models_dir, 'stressed_8liner_generator'))
 
     udpipe = UdpipeParser()
     udpipe.load(models_dir)
@@ -879,10 +949,10 @@ if __name__ == '__main__':
                         wrt.flush()
     else:
         # Тестирование в консоли
-        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n4 - порошки и пирожки\n5 - продолжение первой строки\n\n')
+        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n4 - порошки и пирожки\n\n')
         format = None
         while not format:
-            s = input('[0] | 1 | 2 | 4 | 5 :> ').strip()
+            s = input('[0] | 1 | 2 | 4 :> ').strip()
             if len(s) == 0:
                 format = 'четверостишье'
                 break
@@ -898,19 +968,20 @@ if __name__ == '__main__':
             elif s == '4':
                 format = 'порошок'
                 break
-            elif s == '5':
-                format = '1->234'
-                break
             else:
-                print('Недопустимый выбор, пожалуйста введите один из вариантов 0 | 1 | 2 | 4 | 5')
+                print('Недопустимый выбор, пожалуйста введите один из вариантов 0 | 1 | 2 | 4')
 
         while True:
             topic = input(':> ').strip()
 
-            ranked_poems = generate_poems(format, topic)
+            ranked_poems = generate_poems(format, topic, num_return_sequences=5)
 
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
+
+                if format == 'четверостишье':
+                    poem = continue8(poem)
+
                 for line in poem:
                     print(line)
 
