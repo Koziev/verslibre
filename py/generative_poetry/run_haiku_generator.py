@@ -22,14 +22,7 @@ from rugpt_generator import RugptGenerator
 from antiplagiat import Antiplagiat
 from poetry_seeds import SeedGenerator
 from init_logging import init_logging
-
-
-def v_cosine(a, b):
-    denom = (np.linalg.norm(a) * np.linalg.norm(b))
-    if denom > 0:
-        return np.dot(a, b) / denom
-    else:
-        return 0
+from is_good_haiku import is_good_haiku
 
 
 def get_user_id(update: Update) -> str:
@@ -37,30 +30,7 @@ def get_user_id(update: Update) -> str:
     return user_id
 
 
-def remove_trailing_punct(s):
-    while s and s[-1] in '.?,!:;…-':
-        s = s[:-1].strip()
-    return s
 
-
-def is_good_haiku(s):
-    # 01.01.2022 отбраковываем генерации, в которых три строки повторяются:
-    # Лягушка прыгнула в пруд.
-    # Лягушка прыгнула в пруд.
-    # Лягушка прыгнула в пруд…
-    lines = [remove_trailing_punct(x.strip()) for x in s.split('\n')]
-    if lines[0] == lines[1] or lines[1] == lines[2] or lines[0] == lines[2]:
-        return False
-
-    for line in lines:
-        # Ловим повторы типа: И солнце и солнце.
-        #                       ^^^^^^^^^^^^^^^
-        tokens = re.split(r'[.?,!:;…\-\s]', line)
-        for t1, t2, t3 in zip(tokens, tokens[1:], tokens[2:]):
-            if t1 == t3 and t1 not in ('еще', 'ещё', 'снова', 'вновь', 'сильнее') and t2 == 'и':
-                return False
-
-    return True
 
 
 def render_haiku_html(haiku_txt):
@@ -90,9 +60,10 @@ def start(update, context) -> None:
                                        per_user=True)
 
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 03.02.2022).\n\n".format(update.message.from_user.full_name) +\
-                             "Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа. "
-                             "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n\n"
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 14.02.2022).\n\n".format(update.message.from_user.full_name) +\
+                             "Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n\n"
+                             "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
+                             "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                              "Задавайте тему в виде сочетания прилагательного и существительного, например <i>морозный февраль</i>.\n"
                              "Либо выберите готовую тему из предложенных (кнопки внизу).\n\n"
                              "Кнопка [<b>Ещё</b>] выведет новый вариант хайку на заданную тему.",
@@ -284,9 +255,6 @@ if __name__ == '__main__':
     haiku_generator = RugptGenerator()
     haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
 
-    #caption_generator = RugptGenerator()
-    #caption_generator.load(os.path.join(models_dir, 'rugpt_caption_generator'))
-
     if mode == 'telegram':
         logging.info('Starting telegram bot')
 
@@ -316,7 +284,6 @@ if __name__ == '__main__':
             q = input(':> ').strip()
             if q:
                 px = haiku_generator.generate_output(q)
-                #px = ranker.rerank(q, px)
                 for ipoem, haiku in enumerate(px, start=1):
                     if '|' in haiku:
                         haiku = haiku.replace(' | ', '\n')
