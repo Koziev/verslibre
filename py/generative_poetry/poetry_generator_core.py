@@ -439,7 +439,7 @@ class RugptGenerator:
             #total_sequence = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
             #total_sequence = total_sequence.strip().replace('<pad>', '')
             #generated_sequences.add(total_sequence)
-            generated_sequences.add(text.strip().replace('<pad>', ''))
+            generated_sequences.add(text.strip().replace('<pad>', '').strip())
 
         return list(generated_sequences)
 

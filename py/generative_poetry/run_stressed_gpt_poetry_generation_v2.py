@@ -75,7 +75,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 26.02.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 13.03.2022).\n" +
                                   "Для генерации хайку попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
