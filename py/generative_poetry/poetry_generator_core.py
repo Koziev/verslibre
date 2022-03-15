@@ -1,13 +1,19 @@
+"""
+Основной код инференса для модели генеративной поэзии, без привязки к фронту.
+
+15-03-2022 Перенос сюда кода для управления генерацией через коррекцию финальных логитов по спискам
+           позитивной и негативной лексики.
+"""
+
 import os
 import json
 import random
 import logging
 import traceback
 import warnings
+import collections
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
-
-import tqdm
 import numpy as np
 import torch
 import torch.nn
@@ -47,7 +53,75 @@ from generative_poetry.experiments.rugpt_with_stress.break_to_syllables import b
 from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.experiments.rugpt_with_stress.stressed_gpt_tokenizer import StressedGptTokenizer
 from generative_poetry.whitespace_normalization import normalize_whitespaces
+from generative_poetry.metre_classifier import get_syllables
 
+
+
+upper_cyr = 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'
+
+
+logits_booster = None
+
+
+class ForceTopicWordsLogitsProcessor(transformers.LogitsProcessor):
+    def __init__(self, positive_syllabic_ngrams, negative_syllabic_ngrams, gpt_tokenizer):
+        self.positive_syllabic_ngrams = positive_syllabic_ngrams
+        self.negative_syllabic_ngrams = negative_syllabic_ngrams
+        self.gpt_tokenizer = gpt_tokenizer
+
+        # для перевода слогов из целевой позитивной и негативной лексики в gpt-токены
+        # нам нужно знать найти их без знаков ударения.
+        self.syllab2tokens = collections.defaultdict(list)
+        for token, token_id in gpt_tokenizer.vocab.items():
+            unstressed_token = token.replace('\u0301', '').lower()
+            self.syllab2tokens[unstressed_token].append((token, token_id))
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        #boost_matrix = np.ones((scores.shape[0], scores.shape[1]), dtype=np.float32)
+        boost_matrix = np.zeros((scores.shape[0], scores.shape[1]), dtype=np.float32)
+
+        for iseq, seq_ids in enumerate(input_ids.tolist()):
+            tx = [self.gpt_tokenizer.id2str[token_id] for token_id in seq_ids]
+
+            if '$' in tx:
+                tx = ['|'] + tx[tx.index('$')+1:]
+
+            # Ищем, какие токены после правого края цепочки стоит поднять в ранге
+            last1 = tx[-1]
+
+            key = None
+            if last1 in ('|', '<nl>'):
+                # 1-граммы
+                key = ('|',)
+            else:
+                if len(tx) > 1 and tx[-2] in ('|', '<nl>'):
+                    # 2-граммы
+                    key = ('|', tx[-1])
+
+            if key is not None:
+                # Позитивная лексика
+                for next_token, score in self.positive_syllabic_ngrams.get(key, []):
+                    for next_token, next_token_id in self.syllab2tokens.get(next_token, []):
+                        boost_matrix[iseq, next_token_id] = 0.01*(len(key[1]) + len(next_token))  #pow(1.05, len(key[1]) + len(next_token))
+
+                # Негативная лексика
+                for next_token, score in self.negative_syllabic_ngrams.get(key, []):
+                    for next_token, next_token_id in self.syllab2tokens.get(next_token, []):
+                        boost_matrix[iseq, next_token_id] = -0.05*(len(key[1]) + len(next_token))  #pow(0.95, len(key[1]) + len(next_token))
+
+
+        boost_matrix = torch.from_numpy(boost_matrix).to(scores.device)
+        scores.add_(boost_matrix)
+        #scores.mul_(boost_matrix)
+
+        #... TODO ...
+
+        #if self.static_bad_words_mask is None and len(self.bad_words_id_length_1) > 0:
+        #    self.static_bad_words_mask = self._calc_static_bad_word_mask(scores)
+        #dynamic_banned_tokens = self._calc_banned_bad_words_ids(input_ids.tolist())
+        #scores = self._set_scores_to_inf_for_banned_tokens(scores, dynamic_banned_tokens)
+
+        return scores
 
 
 def sample_v2(
@@ -171,6 +245,13 @@ def sample_v2(
     return_dict_in_generate = (
         return_dict_in_generate if return_dict_in_generate is not None else self.config.return_dict_in_generate
     )
+
+    # ========================================================
+    # 05-01-2022 эксперимент с бустером
+    if logits_booster is not None:
+        logits_processor.append(logits_booster)
+    # конец эксперимента
+    # ========================================================
 
     # init attention / hidden states / scores tuples
     scores = () if (return_dict_in_generate and output_scores) else None
@@ -387,7 +468,9 @@ class RugptGenerator:
 
         self.model.to(self.device)
 
-    def generate_output(self, context, num_return_sequences=10, temperature=1.0):
+    def generate_output(self, context, num_return_sequences=10, temperature=1.0, positive_words=None, negative_words=None):
+        global logits_booster
+
         top_k = 30
         top_p = 0.85
         repetition_penalty = 1.0
@@ -397,10 +480,45 @@ class RugptGenerator:
 
         encoded_prompt = self.tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
         encoded_prompt = encoded_prompt.to(self.device)
+        max_len = length + len(encoded_prompt[0])
+
+        # 15-05-2022 НАЧАЛО ЭКСПЕРИМЕНТА с управлением генерацией через логиты
+        if positive_words is not None or negative_words is not None:
+            positive_syllabic_ngrams = collections.defaultdict(list)
+            if positive_words is not None:
+                for word, score in positive_words.items():
+                    sx = ['|'] + [x.text for x in get_syllables(word)][::-1]
+                    if len(sx) > 1:
+                        positive_syllabic_ngrams[sx[0]].append((sx[1], score))
+                        if len(sx) > 2:
+                            positive_syllabic_ngrams[(sx[0], sx[1])].append((sx[2], score))
+
+            negative_syllabic_ngrams = collections.defaultdict(list)
+            for word, score in negative_words.items():
+                sx = ['|'] + [x.text for x in get_syllables(word)][::-1]
+                if len(sx) > 1:
+                    negative_syllabic_ngrams[sx[0]].append((sx[1], score))
+                    if len(sx) > 2:
+                        negative_syllabic_ngrams[(sx[0], sx[1])].append((sx[2], score))
+
+            # может получится, что некоторые n-граммы входят и в позитивные, и в негативные.
+            # такие нграммы мы просто исключим из списков, и не будем на них влиять.
+            nx1 = set(positive_syllabic_ngrams.keys())
+            nx2 = set(negative_syllabic_ngrams.keys())
+            for k in nx1 & nx2:
+                del positive_syllabic_ngrams[k]
+                del negative_syllabic_ngrams[k]
+
+            logits_booster = ForceTopicWordsLogitsProcessor(positive_syllabic_ngrams,
+                                                            negative_syllabic_ngrams,
+                                                            self.tokenizer)
+        else:
+            logits_booster = None
+        # 15-05-2022 КОНЕЦ ЭКСПЕРИМЕНТА
 
         output_sequences = self.model.generate(
             input_ids=encoded_prompt,
-            max_length=length + len(encoded_prompt[0]),
+            max_length=max_len,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
@@ -409,7 +527,7 @@ class RugptGenerator:
             #num_beams=5,
             #num_beam_groups=5,
             num_return_sequences=num_return_sequences,
-            pad_token_id=0
+            pad_token_id=0,
         )
 
         # Remove the batch dimension when returning multiple sequences
@@ -518,10 +636,13 @@ class PoetryGeneratorCore(object):
 
         self.aligner = PoetryStressAligner(self.udpipe, self.accents, os.path.join(data_dir, 'poetry', 'dict'))
 
-    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30):
+    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30, positive_words=None, negative_words=None):
         try:
             seed = arabize(break_to_syllables(self.udpipe, self.accents, format + ' , ' + topic))
-            poems = self.poem_generator.generate_output(seed, num_return_sequences=num_return_sequences)
+            poems = self.poem_generator.generate_output(seed,
+                                                        num_return_sequences=num_return_sequences,
+                                                        positive_words=positive_words,
+                                                        negative_words=negative_words)
         except Exception as ex:
             logging.error(ex)
             return []
