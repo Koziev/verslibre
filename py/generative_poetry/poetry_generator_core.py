@@ -86,7 +86,7 @@ class ForceTopicWordsLogitsProcessor(transformers.LogitsProcessor):
             if '$' in tx:
                 tx = ['|'] + tx[tx.index('$')+1:]
 
-            # Ищем, какие токены после правого края цепочки стоит поднять в ранге
+            # Ищем, какие токены после правого края цепочки стоит усилить или придавить
             last1 = tx[-1]
 
             key = None
@@ -107,7 +107,7 @@ class ForceTopicWordsLogitsProcessor(transformers.LogitsProcessor):
                 # Негативная лексика
                 for next_token, score in self.negative_syllabic_ngrams.get(key, []):
                     for next_token, next_token_id in self.syllab2tokens.get(next_token, []):
-                        boost_matrix[iseq, next_token_id] = -0.05*(len(key[1]) + len(next_token))  #pow(0.95, len(key[1]) + len(next_token))
+                        boost_matrix[iseq, next_token_id] = -1.00*(len(key[1]) + len(next_token))  #pow(0.95, len(key[1]) + len(next_token))
 
 
         boost_matrix = torch.from_numpy(boost_matrix).to(scores.device)
