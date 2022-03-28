@@ -11,7 +11,7 @@ RUN apt-get -y install git-core
 RUN apt-get install -y liblzma-dev
 
 RUN pip install --upgrade pip setuptools
-RUN pip install torch tensorflow transformers pyconll ufal.udpipe fasttext nltk sentencepiece coloredlogs python-telegram-bot jellyfish hyperopt jsonpickle
+RUN pip install torch tensorflow transformers pyconll ufal.udpipe stanza fasttext nltk sentencepiece coloredlogs python-telegram-bot jellyfish hyperopt jsonpickle
 
 
 WORKDIR /home
@@ -28,6 +28,9 @@ COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
 COPY ./py/generative_poetry/poetry_alignment.py ./
 COPY ./py/generative_poetry/metre_classifier.py ./
+COPY ./py/generative_poetry/poetry_generator_core.py ./
+COPY ./py/generative_poetry/stanza_parser.py ./
+COPY ./py/generative_poetry/whitespace_normalization.py ./
 
 WORKDIR /text_generator/py/generative_poetry/experiments/rugpt_with_stress
 COPY ./py/generative_poetry/experiments/rugpt_with_stress/break_to_syllables.py ./
@@ -47,6 +50,11 @@ COPY ./py/transcriptor_models/stress_model/*.py ./
 
 WORKDIR /text_generator/models/
 COPY ./models/udpipe_syntagrus.model ./
+
+WORKDIR /text_generator/data/poetry/dict
+COPY ./data/poetry/dict/collocation_accents.dat ./
+COPY ./data/poetry/dict/bad_signature1.dat ./
+COPY ./data/poetry/dict/bad_alignment2.dat ./
 
 
 WORKDIR /text_generator/tmp
@@ -70,6 +78,13 @@ COPY ./scripts/verslibre_tg.sh ./
 
 WORKDIR /text_generator/models/stressed_poetry_generator
 COPY ./models/stressed_poetry_generator/* ./
+
+WORKDIR /text_generator/models/stressed_8liner_generator
+COPY ./models/stressed_8liner_generator/* ./
+
+WORKDIR /text_generator/models
+COPY ./models/seeds.pkl ./
+
 
 WORKDIR /text_generator/py/generative_poetry
 CMD "/text_generator/scripts/verslibre_tg.sh"
