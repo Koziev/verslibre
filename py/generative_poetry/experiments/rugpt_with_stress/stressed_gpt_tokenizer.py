@@ -87,7 +87,7 @@ class StressedGptTokenizer(transformers.tokenization_utils.PreTrainedTokenizer):
     #        return [self.vocab.get(t, self.unk_token_id) for t in self.tokenize(text)]
 
     def _convert_token_to_id(self, token):
-        return self.vocab[token]
+        return self.vocab.get(token, 3)  # self.unk_token_id
 
     def is_special_token(self, token_id):
         return 0 <= token_id <= 5
