@@ -16,8 +16,10 @@
 # limitations under the License.
 
 # Версия классификатора эмоциональной окраски стихов на базе датасета CEDR https://huggingface.co/datasets/cedr
+# 01.04.2022 добавлен вывод confusion matrix, чтобы понять причину странного поведения PPLM с этим классификатором для класса "surprise"
 
 import argparse
+import collections
 import csv
 import json
 import math
@@ -34,7 +36,8 @@ from torchtext import data as torchtext_data
 from torchtext import datasets
 from tqdm import tqdm, trange
 from datasets import load_dataset
-
+import sklearn
+import terminaltables
 
 from pplm_classification_head import ClassificationHead
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
@@ -44,6 +47,9 @@ torch.manual_seed(0)
 np.random.seed(0)
 EPSILON = 1e-10
 max_length_seq = 200
+
+CEDR_classes = {0: "joy", 1: "sadness", 2: "surprise", 3: "fear", 4: "anger", 5: "none"}
+CEDR_labels = ["joy", "sadness", "surprise", "fear", "anger", "none"]
 
 
 class Discriminator(nn.Module):
@@ -150,7 +156,7 @@ def train_epoch(data_loader, discriminator, optimizer, epoch=0, log_interval=10,
 
         samples_so_far += len(input_t)
 
-        if batch_idx % log_interval == 0:
+        if log_interval > 0 and batch_idx % log_interval == 0:
             print(
                 "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
                     epoch + 1,
@@ -166,6 +172,10 @@ def evaluate_performance(data_loader, discriminator, device="cpu"):
     discriminator.eval()
     test_loss = 0
     correct = 0
+
+    yx_true = []
+    yx_pred = []  # 01.04.2022 inkoziev: для расчета confusion matrix
+
     with torch.no_grad():
         for input_t, target_t in data_loader:
             input_t, target_t = input_t.to(device), target_t.to(device)
@@ -175,6 +185,8 @@ def evaluate_performance(data_loader, discriminator, device="cpu"):
             # get the index of the max log-probability
             pred_t = output_t.argmax(dim=1, keepdim=True)
             correct += pred_t.eq(target_t.view_as(pred_t)).sum().item()
+            yx_pred.extend([z[0] for z in pred_t.cpu().tolist()])
+            yx_true.extend(target_t.cpu().tolist())
 
     test_loss /= len(data_loader.dataset)
 
@@ -184,6 +196,16 @@ def evaluate_performance(data_loader, discriminator, device="cpu"):
             test_loss, correct, len(data_loader.dataset), 100.0 * correct / len(data_loader.dataset)
         )
     )
+
+    # 01.04.2022 inkoziev: расчет confusion matrix
+    CM = sklearn.metrics.confusion_matrix(y_true=yx_true, y_pred=yx_pred, normalize='true')
+    CM_table = [[""]+CEDR_labels]
+    for label, row in zip(CEDR_labels, CM):
+        CM_table.append([label] + ['{:5.3f}'.format(z) for z in row])
+    t = terminaltables.AsciiTable(CM_table)
+    t.inner_row_border = True
+    print(t.table)
+
 
 
 def predict(input_sentence, model, classes, cached=False, device="cpu"):
@@ -240,7 +262,7 @@ def train_discriminator(
         # 11.02.2022 Добавка для эксперимента в генераторе стихов
         # dataset = load_dataset("cedr")
 
-        idx2class = {0: "joy", 1: "sadness", 2: "surprise", 3: "fear", 4: "anger", 5: "none"}
+        idx2class = CEDR_classes
         class2idx = {c: i for i, c in idx2class.items()}
 
         discriminator = Discriminator(
@@ -258,9 +280,7 @@ def train_discriminator(
                 text = row['text']
                 labels = row['labels']
                 if len(labels) == 0:
-                    label = 5
-                else:
-                    label = labels[0]
+                    labels = [5]
 
                 try:
                     seq = discriminator.tokenizer.encode(text)
@@ -273,12 +293,19 @@ def train_discriminator(
                         print("Text {} is longer than maximum length {}".format(text, max_length_seq))
                         continue
 
-                    x.append(seq)
-                    y.append(label)
+                    for label in labels:
+                        x.append(seq)
+                        y.append(label)
 
                 except Exception as ex:
                     print("Error tokenizing line {}, skipping it\n{}".format(text), ex)
                     exit(0)
+
+            print('-'*80)
+            print('{} dataset statistics:'.format(part))
+            for label, count in sorted(collections.Counter(y).items(), key=lambda z: z[0]):
+                print('{} ==> {}'.format(CEDR_labels[label], count))
+            print('-'*80)
 
             if part == 'train':
                 train_dataset = Dataset(x, y)
@@ -530,15 +557,16 @@ def train_discriminator(
         end = time.time()
         print("Epoch took: {:.3f}s".format(end - start))
 
-        print('='*60)
-        print("\nExample predictions:")
-        example_sentences = ["Это было очень приятное путешествие, которое подарило мне много счастливых минут",
-                             "Злая кошка испортила мне всё настроение, и теперь я вне себя от злости",
-                             "Очень печально, что до весны еще так далеко, прямо грустно так, аж слезы текут",
-                             "Влюбился внезапно, это был такой сюрприз!"]
-        for example_sentence in example_sentences:
-            predict(example_sentence, discriminator, idx2class, cached=cached, device=device)
-        print('='*60)
+        if False:
+            print('='*60)
+            print("\nExample predictions:")
+            example_sentences = ["Это было очень приятное путешествие, которое подарило мне много счастливых минут",
+                                 "Злая кошка испортила мне всё настроение, и теперь я вне себя от злости",
+                                 "Очень печально, что до весны еще так далеко, прямо грустно так, аж слезы текут",
+                                 "Влюбился внезапно, это был такой сюрприз!"]
+            for example_sentence in example_sentences:
+                predict(example_sentence, discriminator, idx2class, cached=cached, device=device)
+            print('='*60)
 
         if save_model:
             # torch.save(discriminator.state_dict(),
