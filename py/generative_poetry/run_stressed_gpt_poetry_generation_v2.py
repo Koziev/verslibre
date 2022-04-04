@@ -75,7 +75,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 13.03.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 04.04.2022).\n" +
                                   "Для генерации хайку попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
@@ -339,7 +339,7 @@ if __name__ == '__main__':
 
         for _ in tqdm.tqdm(range(n_runs), total=n_runs):
             for seed in seed_generator.generate_seeds('evaluation'):
-                ranked_poems = poetry_generator.generate_poems('стих', seed, score_threshold=0.01, verbosity=0)
+                ranked_poems = poetry_generator.generate_poems('четверостишье', seed, score_threshold=0.01, verbosity=0)
                 if len(ranked_poems) == 0:
                     n_empty_generations += 1
                 else:
@@ -359,7 +359,7 @@ if __name__ == '__main__':
         with io.open(os.path.join(tmp_dir, 'stressed_gpt_poetry_generation_v2.output.txt'), 'w', encoding='utf-8') as wrt:
             for _ in tqdm.tqdm(range(n_runs), total=n_runs):
                 for seed in seed_generator.generate_seeds('generation'):
-                    ranked_poems = poetry_generator.generate_poems('стих', seed, score_threshold=0.20, verbosity=0)
+                    ranked_poems = poetry_generator.generate_poems('четверостишье', seed, score_threshold=0.20, verbosity=0)
                     for poem, score in ranked_poems[:5]:
                         wrt.write('score={:5.3f}\n'.format(score))
                         wrt.write('='*70 + '\n\n')
