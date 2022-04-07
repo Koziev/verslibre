@@ -6,6 +6,7 @@
 28-12-2021 Добавлены еще штрафы за всякие нехорошие с точки зрения вокализма ситуации в строке, типа 6 согласных подряд в смежных словах "пёстр страх"
 23-01-2022 Добавлен код для словосочетаний с вариативным ударением типа "пО лесу | по лЕсу"
 26-01-2022 Если слово допускает альтернативные ударения по списку и теги не позволяют сделать выбор, то берем первое ударение, а не бросаем исключение.
+07-04-2022 Если из-за ошибки частеречной разметки не удалось определить вариант ударения омографа, то будем перебирать все варианты.
 """
 
 import collections
@@ -119,12 +120,13 @@ class WordStressVariant(object):
 
 
 class PoetryWord(object):
-    def __init__(self, lemma, form, upos, tags, stress_pos):
+    def __init__(self, lemma, form, upos, tags, stress_pos, alternative_stress_positions):
         self.lemma = lemma
         self.form = form
         self.upos = upos
         self.tags = tags
         self.stress_pos = stress_pos
+        self.alternative_stress_positions = alternative_stress_positions  # все варианты положения ударения, первый вариант - условной основной
         self.is_rhyming_word = False  # отмечаем последнее слово в каждой строке
 
         self.leading_consonants = 0  # кол-во согласных ДО первой гласной
@@ -180,6 +182,11 @@ class PoetryWord(object):
                 if stress_pos == -1:
                     raise ValueError('Could not find stressed position in word "{}" in ambiguous_accents2'.format(accent))
 
+                variants.append(WordStressVariant(self, stress_pos, 1.0))
+        elif len(self.alternative_stress_positions) > 1:
+            # 07.04.2022 из-за ошибки pos-tagger'а не удалось обработать омограф.
+            # будем перебирать все варианты ударения в нем.
+            for stress_pos in self.alternative_stress_positions:
                 variants.append(WordStressVariant(self, stress_pos, 1.0))
         elif uform == 'нибудь':
             # Частицу "нибудь" не будем ударять:
@@ -397,11 +404,24 @@ def count_vowels(s):
     return sum((c.lower() in 'уеыаоэёяию') for c in s)
 
 
+def locate_Astress_pos(s):
+    stress_pos = -1
+    n_vowels = 0
+    for c in s:
+        if c.lower() in 'уеыаоэёяию':
+            n_vowels += 1
+
+        if c in 'АЕЁИОУЫЭЮЯ':
+            stress_pos = n_vowels
+            break
+
+    return stress_pos
+
+
 class PoetryLine(object):
     def __init__(self):
         self.text = None
         self.pwords = None
-        #self.stress_signature = None
 
     @staticmethod
     def build(text, udpipe_parser, accentuator):
@@ -414,10 +434,14 @@ class PoetryLine(object):
             text2 = text2.replace(c, ' ' + c + ' ').replace('  ', ' ')
 
         parsings = udpipe_parser.parse_text(text2)
+        if parsings is None:
+            raise ValueError('Could not parse text: ' + text2)
+
         for parsing in parsings:
             for ud_token in parsing:
                 word = ud_token.form.lower()
                 stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
+                alt_stress_pos = []
                 if count_vowels(word) > 0 and stress_pos == -1:
                     # Если слово допускает альтернативные ударения по списку, то берем первое из них (обычно это
                     # основное, самое частотное ударение), и не бросаем исключение, так как дальше матчер все равно
@@ -435,10 +459,20 @@ class PoetryLine(object):
                                 break
 
                     if stress_pos == -1:
-                        msg = 'Could not locate stress position in word "{}"'.format(word)
-                        raise ValueError(msg)
+                        # Мы можем оказаться тут из-за ошибки частеречной разметки. Проверим,
+                        # входит ли слово в список омографов.
+                        if word in accentuator.ambiguous_accents:
+                            # Слово является омографом. Возьмем в работу все варианты ударения.
+                            for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
+                                i = locate_Astress_pos(stressed_form)
+                                alt_stress_pos.append(i)
+                            stress_pos = alt_stress_pos[0]
 
-                pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos)
+                        if stress_pos == -1:
+                            msg = 'Could not locate stress position in word "{}"'.format(word)
+                            raise ValueError(msg)
+
+                pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
                 pline.pwords.append(pword)
 
         pline.locate_rhyming_word()
