@@ -60,7 +60,7 @@ def start(update, context) -> None:
                                        per_user=True)
 
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 14.02.2022).\n\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 07.04.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n\n"
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
                              "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +

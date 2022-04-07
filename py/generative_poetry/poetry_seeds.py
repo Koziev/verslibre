@@ -36,6 +36,7 @@ class SeedGenerator(object):
                 noun = random.choice(nouns)
                 colloc = adj + ' ' + noun
                 seeds.add(colloc)
+                self.user_seeds[user_id].add(colloc)
         else:
             n_trial = 0
             while n_trial < 1000:
