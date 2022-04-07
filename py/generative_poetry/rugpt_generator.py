@@ -1,24 +1,24 @@
+import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
 
 class RugptGenerator:
     def __init__(self):
-        self.device = "cpu"  # "cuda" #torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = None
         self.model = None
 
     def load(self, model_name_or_path):
-        self.device = "cpu"  # "cuda" #torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path)
+        self.tokenizer.add_special_tokens({'bos_token': '<s>', 'eos_token': '</s>', 'pad_token': '<pad>'})
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path)
         self.model.to(self.device)
 
-    def generate_output(self, context, num_return_sequences=10):
-        temperature = 0.9
+    def generate_output(self, context, num_return_sequences=10, temperature=0.9):
         beam_k = 10
         beam_p = 0.9
         repetition_penalty = 1.0
-        prompt_text = context + ' #'
+        prompt_text = "<s>" + context + ' #'
         stop_token = "</s>"
         length = 100
 
@@ -61,6 +61,5 @@ class RugptGenerator:
 
             total_sequence = total_sequence.strip()
             generated_sequences.add(total_sequence)
-            #print(total_sequence)
 
         return list(generated_sequences)
