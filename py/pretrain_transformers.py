@@ -21,6 +21,8 @@ using a masked language modeling (MLM) loss.
 16-11-2021 порежем текст на куски по границам, отмеченным токеном <|startoftext|>
 28-11-2021 добавляем <nl> в словарь специальных токенов после создания токенизатора
 08-12-2021 добавлено использование кастомного токенизатора StressedGptTokenizer
+06-04-2022 после загрузки претренированного токенизатора инициализируем в нем токены <s>, </s> и <pad>, так как
+           иначе они разбиваются на символы.
 """
 
 import argparse
@@ -805,7 +807,7 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    # tokenizer.add_special_tokens({"bos_token": "<s>", "eos_token": "</s>"})
+        tokenizer.add_special_tokens({'bos_token': '<s>', 'eos_token': '</s>', 'pad_token': '<pad>'})  # 06-04-2022
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from "
