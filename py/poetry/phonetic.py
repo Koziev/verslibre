@@ -66,6 +66,14 @@ class Accents:
         logging.info('Loading ambiguous accents information from "%s"', path)
         d = yaml.safe_load(io.open(path, 'r', encoding='utf-8').read())
         self.ambiguous_accents = d
+
+        # 14.02.2022 сделаем проверку содержимого, чтобы не словить ошибку в рантайме.
+        for word, wdata in self.ambiguous_accents.items():
+            for stressed_form, tagsets in wdata.items():
+                if not any((c in 'АЕЁИОУЫЭЮЯ') for c in stressed_form):
+                    print('Missing stressed vowel in "ambiguous_accents.yaml" for word={}'.format(word))
+                    exit(0)
+
         logging.info('%d items in ambiguous_accents', len(self.ambiguous_accents))
 
         # Некоторые слова допускают разное ударение для одной грамматической формы: пОнял-понЯл
@@ -149,6 +157,7 @@ class Accents:
                     if nword not in self.word_accents_dict:
                         self.word_accents_dict[nword] = a
 
+        true_accent_entries = dict()
         with io.open(os.path.join(data_dir, 'true_accents.txt'), 'r', encoding='utf-8') as rdr:
             for line in rdr:
                 word = line.strip()
@@ -164,7 +173,15 @@ class Accents:
                     accent_char = m.groups(0)[0]
                     accent_pos = word.index(accent_char)
                     nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False) + 1
+
+                    # Детектируем переопеределение ударения в слове. Такие слова с неоднозначным ударением
+                    # надо переносить в ambiguous_accents_2.yaml
+                    if nword in true_accent_entries and true_accent_entries[nword] != word:
+                        logging.error('Controversial redefenition of stress position for word "%s" in "true_accents.txt": %s and %s', nword, true_accent_entries[nword], word)
+                        exit(0)
+
                     self.word_accents_dict[nword] = nb_vowels_before
+                    true_accent_entries[nword] = word
 
         logging.info('%d items in word_accents_dict', len(self.word_accents_dict))
 
@@ -447,12 +464,12 @@ class Accents:
             return stress_pos
 
         # Есть продуктивные приставки типа АНТИ или НЕ
-        for prefix in u'анти не недо прото'.split():
+        for prefix in 'спец сверх недо анти не прото микро макро'.split():
             if word.startswith(prefix):
                 word1 = word[len(prefix):]
                 if len(word1) > 2:
                     if word1 in self.word_accents_dict:
-                        return self.word_accents_dict[word1]
+                        return self.get_vowel_count(prefix) + self.word_accents_dict[word1]
 
         # Иногда можно взять ударение из стема: "ПОЗИТРОННЫЙ" -> "ПОЗИТРОН"
         if False:
