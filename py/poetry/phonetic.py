@@ -442,6 +442,9 @@ class Accents:
             return 1
 
         if 'ё' in word:
+            if word in self.word_accents_dict:
+                return self.word_accents_dict[word]
+
             # считаем, что "ё" всегда ударная (исключение - слово "ёфикация" и однокоренные)
             n_vowels = 0
             for c in word:
@@ -910,6 +913,9 @@ if __name__ == '__main__':
 
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
+
+    i = accents.get_accent('трёхвалентный')
+    assert(i == 3)
 
     i = accents.get_accent('голубое')
     assert(i == 3)
