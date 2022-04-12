@@ -467,7 +467,7 @@ class Accents:
             return stress_pos
 
         # Есть продуктивные приставки типа АНТИ или НЕ
-        for prefix in 'спец сверх недо анти не прото микро макро'.split():
+        for prefix in 'спец сверх недо анти не прото микро макро нано квази'.split():
             if word.startswith(prefix):
                 word1 = word[len(prefix):]
                 if len(word1) > 2:
@@ -913,6 +913,9 @@ if __name__ == '__main__':
 
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
+
+    i = accents.get_accent('наноресничками')
+    assert(i == 4)
 
     i = accents.get_accent('трёхвалентный')
     assert(i == 3)
