@@ -4,6 +4,7 @@
 01.02.2022 Отбраковываем генерации, в которых три строки повторяются (без учета финальных пунктуаторов).
 03.02.2022 Отрисовка текста хайку в HTML с fixed-font, чтобы визуально они лучше выделялись в чате
 04.02.2022 Изменился API генерации затравок: теперь это класс SeedGenerator
+15.04.2022 Эксперимент с переключением доменов генерации: хайку или бусидо
 """
 
 import io
@@ -15,7 +16,7 @@ import re
 import numpy as np
 
 import telegram
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
 from rugpt_generator import RugptGenerator
@@ -30,9 +31,6 @@ def get_user_id(update: Update) -> str:
     return user_id
 
 
-
-
-
 def render_haiku_html(haiku_txt):
     # 03.02.2022 для отрисовки текста сгенерированного хайку в HTML формате в телеграмме
     s = '<pre>' + haiku_txt + '</pre>'
@@ -43,6 +41,7 @@ LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
 MORE = 'Еще...'
 
+user_format = dict()
 last_user_poems = dict()
 last_user_poem = dict()
 
@@ -51,24 +50,54 @@ def start(update, context) -> None:
     user_id = get_user_id(update)
     logging.debug('Entering START callback with user_id=%s', user_id)
 
-    seeds = seed_generator.generate_seeds(user_id)
+    keyboard = [[InlineKeyboardButton('хайку', callback_data='format=' + 'хайку')],
+                [InlineKeyboardButton('бусидо', callback_data='format=' + 'бусидо')],
+                ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.send_message(chat_id=update.message.chat_id,
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 15.04.2022).\n\n".format(update.message.from_user.full_name) +\
+                             "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
+                             "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n"
+                             "Выберите, что будем сочинять:\n",
+                             reply_markup=reply_markup, parse_mode='HTML')
 
+    logging.debug('Leaving START callback with user_id=%s', user_id)
+
+
+def format_menu(context, callback_data):
+    """Пользователь в телеграм-боте выбрал целевой домен генерируемых текстов."""
+    user_id = str(context.effective_user.id)
+    format = callback_data.match.string.split('=')[1]
+
+    # Запомним этот выбор для этого пользователя.
+    user_format[user_id] = format
+    logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
+
+    seeds = seed_generator.generate_seeds(user_id)
     keyboard = [seeds]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
                                        resize_keyboard=True,
                                        per_user=True)
 
-    context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> (версия от 07.04.2022).\n\n".format(update.message.from_user.full_name) +\
-                             "Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n\n"
-                             "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
-                             "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
-                             "Задавайте тему в виде сочетания прилагательного и существительного, например <i>морозный февраль</i>.\n"
-                             "Либо выберите готовую тему из предложенных (кнопки внизу).\n\n"
-                             "Кнопка [<b>Ещё</b>] выведет новый вариант хайку на заданную тему.",
-                             reply_markup=reply_markup, parse_mode='HTML')
-    logging.debug('Leaving START callback with user_id=%s', user_id)
+    if user_format[user_id] == 'хайку':
+        help_text = 'Включен режим <b>хайку</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
+                    'и я сочиню хайку с этими словами. '
+    elif user_format[user_id] == 'бусидо':
+        help_text = 'Включен режим <b>бусидо</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Бусидо - это короткий афористичный текст с привкусом восточной мудрости.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
+                    'и я сочиню бусидо с этими словами. '
+    else:
+        raise NotImplementedError()
+
+    help_text += 'Либо выберите готовую затравку из предложенных - см. кнопки внизу.\n\n' \
+                 'Кнопка [<b>Ещё</b>] выведет новый вариант текста на заданную тему.'
+
+    context.callback_query.message.reply_text(text=help_text, reply_markup=reply_markup, parse_mode='HTML')
+    return
 
 
 def echo(update, context):
@@ -94,16 +123,15 @@ def echo(update, context):
                                                per_user=True)
 
             context.bot.send_message(chat_id=update.message.chat_id,
-                                     text=render_haiku_html(last_user_poem[user_id][2]),
+                                     text=render_haiku_html(last_user_poem[user_id]),
                                      reply_markup=reply_markup, parse_mode='HTML')
 
             return
 
         if update.message.text == LIKE:
             # Какой текст полайкали:
-            #caption = last_user_poem[user_id][0]
-            haiku = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('LIKE: haiku="%s"', haiku)
+            haiku = last_user_poem[user_id].replace('\n', ' | ')
+            logging.info('LIKE: text="%s"', haiku)
             context.bot.send_message(chat_id=update.message.chat_id, text="Спасибо :)")
 
             last_user_poem[user_id] = None
@@ -113,9 +141,8 @@ def echo(update, context):
 
         if update.message.text == DISLIKE:
             # Какой текст не понравился:
-            #caption = last_user_poem[user_id][0]
-            haiku = last_user_poem[user_id][1].replace('\n', ' | ')
-            logging.info('DISLIKE: haiku="%s"', haiku)
+            haiku = last_user_poem[user_id].replace('\n', ' | ')
+            logging.info('DISLIKE: text="%s"', haiku)
             context.bot.send_message(chat_id=update.message.chat_id, text="Понятно :(")
 
             last_user_poem[user_id] = None
@@ -125,11 +152,11 @@ def echo(update, context):
 
         context.bot.send_message(chat_id=update.message.chat_id, text='Минуточку...')
 
-        q = update.message.text
-        logging.info('Will generate a haiku using seed="%s" for user="%s" id=%s in chat=%s', q, update.message.from_user.name, user_id, str(update.message.chat_id))
+        format = user_format.get(user_id, 'хайку')
+        seed = update.message.text
+        logging.info('Will generate a %s using seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
-        haikux = haiku_generator.generate_output(q, num_return_sequences=5)
-        # px = ranker.rerank(q, px)
+        haikux = haiku_generator.generate_output('['+format+'] '+seed, num_return_sequences=5)
 
         haikux2 = []
 
@@ -137,26 +164,28 @@ def echo(update, context):
             if '|' in haiku:
                 haiku = haiku.replace(' | ', '\n')
 
-            if haiku.count('\n') == 2:
-                if is_good_haiku(haiku):
-                    #captions = caption_generator.generate_output(haiku)
-                    #caption = captions[0]
-                    caption = '***'
-                    p_plagiat = antiplagiat.score(haiku)
-                    logging.info('HAIKU #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', ipoem, q, user_id, p_plagiat, haiku.replace('\n', ' | '))
-                    if p_plagiat < 0.90:
-                        haikux2.append((caption, haiku))
+            if format == 'хайку':
+                if haiku.count('\n') == 2:
+                    if is_good_haiku(haiku):
+                        p_plagiat = antiplagiat.score(haiku)
+                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                        if p_plagiat < 0.90:
+                            haikux2.append(haiku)
+            else:
+                p_plagiat = antiplagiat.score(haiku)
+                logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                if p_plagiat < 0.90:
+                    haikux2.append(haiku)
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
 
-        for ipoem, (caption, haiku) in enumerate(haikux2, start=0):
-            #msg = '--- {} ---\n\n{}'.format(caption, haiku)
+        for ipoem, haiku in enumerate(haikux2, start=0):
             msg = haiku
             if ipoem == 1:
-                last_user_poem[user_id] = (caption, haiku, msg)
+                last_user_poem[user_id] = haiku
             else:
-                last_user_poems[user_id].append((caption, haiku, msg))
+                last_user_poems[user_id].append(haiku)
 
         if last_user_poem[user_id]:
             if len(last_user_poems[user_id]):
@@ -170,7 +199,7 @@ def echo(update, context):
                                                per_user=True)
 
             context.bot.send_message(chat_id=update.message.chat_id,
-                                     text=render_haiku_html(last_user_poem[user_id][2]),
+                                     text=render_haiku_html(last_user_poem[user_id]),
                                      reply_markup=reply_markup, parse_mode='HTML')
         else:
             keyboard = [seed_generator.generate_seeds(user_id)]
@@ -189,13 +218,6 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    # НАЧАЛО ОТЛАДКИ
-    #haiku = 'Пруд и лягушки, | Дождик и ветер, | И солнце и солнце.'
-    #haiku = haiku.replace(' | ', '\n')
-    #b = is_good_haiku(haiku)
-    #print(b)
-    # КОНЕЦ ОТЛАДКИ
-
     parser = argparse.ArgumentParser(description='Telegram chatbot')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split())
@@ -269,6 +291,8 @@ if __name__ == '__main__':
         start_handler = CommandHandler('start', start)
         dispatcher.add_handler(start_handler)
 
+        updater.dispatcher.add_handler(CallbackQueryHandler(format_menu, pattern='format=(.*)'))
+
         echo_handler = MessageHandler(Filters.text, echo)
         dispatcher.add_handler(echo_handler)
 
@@ -280,24 +304,47 @@ if __name__ == '__main__':
         updater.idle()
     else:
         # Тестирование в консоли
+
+        # Запрашиваем целевой домен
+        format = None
+        while format is None:
+            print('Целевой домен:')
+            print('[0] - хайку')
+            print('[1] - бусидо')
+            print('[2] - приметы')
+            print('[3] - афоризмы')
+            print('[4] - миниатюры')
+            i = input(':> ').strip()
+            if i in '01234':
+                format = 'хайку бусидо примета афоризм миниатюра'.split()[int(i)]
+            else:
+                print('Неверный выбор!')
+
         while True:
             q = input(':> ').strip()
             if q:
-                px = haiku_generator.generate_output(q)
+                px = haiku_generator.generate_output('[' + format + '] ' + q)
                 for ipoem, haiku in enumerate(px, start=1):
                     if '|' in haiku:
                         haiku = haiku.replace(' | ', '\n')
 
-                    if haiku.count('\n') == 2:
-                        if is_good_haiku(haiku):
-                            #captions = caption_generator.generate_output(haiku)
-                            #caption = captions[0]
-                            caption = '***'
-                            print('HAIKU #{} for seed={}:'.format(ipoem, q))
-                            p_plagiat = antiplagiat.score(haiku)
-                            print('p_plagiat={}'.format(p_plagiat))
-                            print('--- {} ---\n'.format(caption))
-                            print(haiku)
-                            print('\n\n')
+                    is_good = False
+                    if format == 'хайку':
+                        if haiku.count('\n') == 2:
+                            if is_good_haiku(haiku):
+                                is_good = True
+                    else:
+                        is_good = True
+
+                    if is_good:
+                        #captions = caption_generator.generate_output(haiku)
+                        #caption = captions[0]
+                        #caption = '***'
+                        print('{} #{} для затравки "{}":'.format(format, ipoem, q))
+                        p_plagiat = antiplagiat.score(haiku)
+                        print('p_plagiat={}'.format(p_plagiat))
+                        #print('--- {} ---\n'.format(caption))
+                        print(haiku)
+                        print('\n\n')
 
                 print('')
