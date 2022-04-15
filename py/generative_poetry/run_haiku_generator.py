@@ -258,18 +258,10 @@ if __name__ == '__main__':
     if dataset_path:
         logging.info('Initializing antiplagiat module with dataset "%s"', dataset_path)
         with io.open(dataset_path, 'r', encoding='utf-8') as rdr:
-            lines = []
-            for line in rdr:
-                s = line.strip()
-                if s:
-                    if s.startswith('<s>'):
-                        s = s[s.index('#')+1:]
-
-                    lines.append(s.replace('<s>', '').replace('</s>', '').strip())
-                    if s.endswith('</s>'):
-                        text = '\n'.join(lines)
-                        antiplagiat.add_document(text)
-                        lines = []
+            for sample in rdr.read().split('</s>'):
+                text = sample.replace('<s>', '')
+                text = text[text.index('#')+1:].strip()
+                antiplagiat.add_document(text)
     else:
         logging.error('Antiplagiat dataset is not available')
 
