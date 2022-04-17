@@ -96,6 +96,7 @@ class Accents:
                                 if c.isupper():
                                     stress = n_vowels
                                     self.word_accents_dict[word] = stress
+                                    break
 
         if True:
             path2 = os.path.join(data_dir, 'accents.txt')
@@ -467,10 +468,10 @@ class Accents:
             return stress_pos
 
         # Есть продуктивные приставки типа АНТИ или НЕ
-        for prefix in 'спец сверх недо анти не прото микро макро нано квази само'.split():
+        for prefix in 'спец сверх недо анти полу электро магнито не прото микро макро нано квази само слабо одно двух трех четырех пяти шести семи восьми девяти десяти одиннадцати двенадцати тринадцати четырнадцати пятнадцати шестнадцати семнадцати восемнадцати девятнадцати двадцати тридцами сорока пятидесяти шестидесяти семидесяти восьмидесяти девяносто сто тысяче'.split():
             if word.startswith(prefix):
-                word1 = word[len(prefix):]
-                if len(word1) > 2:
+                word1 = word[len(prefix):]  # отсекаем приставку
+                if len(word1) > 2:  # нас интересуют составные слова
                     if word1 in self.word_accents_dict:
                         return self.get_vowel_count(prefix) + self.word_accents_dict[word1]
 
@@ -803,6 +804,40 @@ if __name__ == '__main__':
     data_folder = '../../data/poetry/dict'
     tmp_dir = '../../tmp'
 
+    # НАЧАЛО ОТЛАДКИ
+    if False:
+        accents = Accents()
+        accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
+        accents.after_loading(stress_model_dir='../../tmp/stress_model')
+
+        true_accents = set()
+        with io.open(os.path.join(data_folder, 'true_accents.txt'), 'r') as rdr:
+            for line in rdr:
+                true_accents.add(line.strip().lower())
+
+        with io.open(os.path.join(tmp_dir, 'invalid_accents.txt'), 'w') as wrt:
+            for word, stress in accents.word_accents_dict.items():
+                if 'ё' in word and word not in true_accents:
+                    accent_pos = word.index('ё')
+                    expected_stress = accents.get_vowel_count(word[:accent_pos], abbrevs=False) + 1
+
+                    if stress != expected_stress:
+                        stress_found = False
+                        n_vowels = 0
+                        s = ''
+                        for c in word:
+                            if c in 'уеыаоэёяию':
+                                n_vowels += 1
+                            if n_vowels == stress and not stress_found:
+                                s += '^'
+                                stress_found = True
+                            s += c
+                        print('{}\t\t{}'.format(s, word.replace('ё', 'Ё')))
+                        wrt.write(word.replace('ё', 'Ё')+'\n')
+        exit(0)
+    # КОНЕЦ ОТЛАДКИ
+
+
     e = extract_ending_vc('мама')
     assert(e == 'ма')
 
@@ -914,50 +949,21 @@ if __name__ == '__main__':
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
 
-    i = accents.get_accent('самовыгул')
-    assert(i == 3)
+    # проверяем детектирование ударения для слов, в которых это не требует морфологических тегов.
+    for word in 'магнитозавИсимыми электрощЁточную шестиузловОй двадцатисторОнними двухпротОнными восьмимЕрного пятиствОрчатый тЁрок алЁна самовЫгул нанореснИчками трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split():
+        n_vowels = 0
+        true_stress = -1
+        for c in word:
+            if c.lower() in 'уеыаоэёяию':
+                n_vowels += 1
+                if c.isupper():
+                    true_stress = n_vowels
+                    break
+        pred_stress = accents.get_accent(word.lower())
+        if pred_stress != true_stress:
+            print('Invalid stress position for word "{}" expected: {}, predicted: {}'.format(word, true_stress, pred_stress))
+            exit(0)
 
-    i = accents.get_accent('наноресничками')
-    assert(i == 4)
-
-    i = accents.get_accent('трёхвалентный')
-    assert(i == 3)
-
-    i = accents.get_accent('голубое')
-    assert(i == 3)
-
-    i = accents.get_accent('детям')
-    assert(i == 1)
-
-    #i = accents.get_accent('сочнейшего')
-    #assert(i == 2)
-
-    i = accents.get_accent('землей')
-    assert(i == 2)
-
-    i = accents.get_accent('дождей')
-    assert(i == 2)
-
-    i = accents.get_accent('конек')
-    assert(i == 2)
-
-    i = accents.get_accent('остаётся')
-    assert(i == 3)
-
-    i = accents.get_accent('остается')
-    assert(i == 3)
-
-    i = accents.get_accent('годы')
-    assert(i == 1)
-
-    i = accents.get_accent('кин')
-    assert(i == 1)
-
-    i = accents.get_accent('кино')
-    assert(i == 2)
-
-    i = accents.get_accent('сын')
-    assert(i == 1)
 
     i = accents.get_accent('груди', ['Case=Loc'])
     assert(i == 2)
