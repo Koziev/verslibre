@@ -120,13 +120,17 @@ class WordStressVariant(object):
 
 
 class PoetryWord(object):
-    def __init__(self, lemma, form, upos, tags, stress_pos, alternative_stress_positions):
+    def __init__(self, lemma, form, upos, tags, stress_pos, alternative_stress_positions=None):
         self.lemma = lemma
         self.form = form
         self.upos = upos
         self.tags = tags
         self.stress_pos = stress_pos
-        self.alternative_stress_positions = alternative_stress_positions  # все варианты положения ударения, первый вариант - условной основной
+        if alternative_stress_positions:
+            self.alternative_stress_positions = alternative_stress_positions  # все варианты положения ударения, первый вариант - условной основной
+        else:
+            self.alternative_stress_positions = [stress_pos]
+
         self.is_rhyming_word = False  # отмечаем последнее слово в каждой строке
 
         self.leading_consonants = 0  # кол-во согласных ДО первой гласной
@@ -1042,8 +1046,8 @@ class PoetryStressAligner(object):
 
             # также штрафуем за паттерн "XXX и XXX"
             for w1, w2, w3 in zip(pline.poetry_line.pwords, pline.poetry_line.pwords[1:], pline.poetry_line.pwords[2:]):
-                if w2.form in ('и', ',', 'или', 'иль', 'аль', 'да'):
-                    if w1.form.lower() == w3.form.lower() and w1.form[0] not in '. ! ? вновь еще ещё снова опять'.split(' '):
+                if w2.form.replace('\u0301', '') in ('и', ',', 'или', 'иль', 'аль', 'да'):
+                    if w1.form.replace('\u0301', '').lower() == w3.form.replace('\u0301', '').lower() and w1.form.replace('\u0301', '') not in 'вновь еще ещё снова опять дальше ближе сильнее слабее сильней слабей тише'.split(' '):
                         return True
 
         return False
