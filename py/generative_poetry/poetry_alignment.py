@@ -7,6 +7,7 @@
 23-01-2022 Добавлен код для словосочетаний с вариативным ударением типа "пО лесу | по лЕсу"
 26-01-2022 Если слово допускает альтернативные ударения по списку и теги не позволяют сделать выбор, то берем первое ударение, а не бросаем исключение.
 07-04-2022 Если из-за ошибки частеречной разметки не удалось определить вариант ударения омографа, то будем перебирать все варианты.
+22-04-2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее желательно устранять из обучающего датасета.
 """
 
 import collections
@@ -878,7 +879,12 @@ class PoetryStressAligner(object):
                 rhyme_scheme = None
                 last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
                 # TODO - можно закэшировать проверки пар, так как обычно последние слова не вариативны.
-                if self.check_rhyming(last_pwords[0], last_pwords[2]) and self.check_rhyming(last_pwords[1], last_pwords[3]):
+
+                # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
+                # желательно устранять из обучающего датасета.
+                if self.check_rhyming(last_pwords[0], last_pwords[1]) and self.check_rhyming(last_pwords[1], last_pwords[2]):
+                    rhyme_scheme = 'AAAA'
+                elif self.check_rhyming(last_pwords[0], last_pwords[2]) and self.check_rhyming(last_pwords[1], last_pwords[3]):
                     # Считаем, что слово не рифмуется само с собой, чтобы не делать для отсечения
                     # таких унылых рифм отдельную проверку в другой части кода.
                     if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
