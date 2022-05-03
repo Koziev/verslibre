@@ -5,6 +5,7 @@
 04.02.2022 Рефакторинг и переработка механизма: подготовка списка заранее, сохранение его в pickle-файле
 04.04.2022 Первая (для данного пользователя) порция седжестов генерируется особым образом, а не берется
            из подготовленного списка.
+03.05.2022 Отдельный список затравок для бусидо
 """
 
 import random
@@ -21,9 +22,24 @@ class SeedGenerator(object):
         with open(os.path.join(models_dir, 'seeds.pkl'), 'rb') as f:
             self.common_seeds = pickle.load(f)
             self.month_2_data = pickle.load(f)
+            self.busido_seeds = pickle.load(f)
 
-    def generate_seeds(self, user_id):
+    def generate_seeds(self, user_id, domain=None):
         seeds = set()
+        if domain and domain == 'бусидо':
+            # Для бусидо сначала пытаемся использовать отдельный список.
+            n_trial = 0
+            while n_trial < 20:
+                n_trial += 1
+                seed = random.choice(self.busido_seeds)
+
+                if seed not in self.user_seeds[user_id]:
+                    seeds.add(seed)
+                    self.user_seeds[user_id].add(seed)
+                    if len(seeds) >= 3:
+                        break
+            if len(seeds) >= 2:
+                return list(seeds)
 
         if len(self.user_seeds) == 0:
             # 04.04.2022 отдельная ветка генерации первой порции саджестов.
@@ -38,16 +54,18 @@ class SeedGenerator(object):
                 seeds.add(colloc)
                 self.user_seeds[user_id].add(colloc)
         else:
-            n_trial = 0
-            while n_trial < 1000:
-                n_trial += 1
-                seed = random.choice(self.common_seeds)
+            # Вторая и последующие порции саджестов.
+            if len(seeds) < 3:
+                n_trial = 0
+                while n_trial < 1000:
+                    n_trial += 1
+                    seed = random.choice(self.common_seeds)
 
-                if seed not in self.user_seeds[user_id]:
-                    seeds.add(seed)
-                    self.user_seeds[user_id].add(seed)
-                    if len(seeds) >= 3:
-                        break
+                    if seed not in self.user_seeds[user_id]:
+                        seeds.add(seed)
+                        self.user_seeds[user_id].add(seed)
+                        if len(seeds) >= 3:
+                            break
 
         return list(seeds)
 

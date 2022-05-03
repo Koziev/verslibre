@@ -5,6 +5,7 @@
 03.02.2022 Отрисовка текста хайку в HTML с fixed-font, чтобы визуально они лучше выделялись в чате
 04.02.2022 Изменился API генерации затравок: теперь это класс SeedGenerator
 15.04.2022 Эксперимент с переключением доменов генерации: хайку или бусидо
+03.05.2022 Для бусидо сделан отдельный список саджестов
 """
 
 import io
@@ -12,6 +13,7 @@ import os
 import argparse
 import logging.handlers
 import re
+import collections
 
 import numpy as np
 
@@ -19,6 +21,7 @@ import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
+from generative_poetry.udpipe_parser import UdpipeParser
 from rugpt_generator import RugptGenerator
 from antiplagiat import Antiplagiat
 from poetry_seeds import SeedGenerator
@@ -40,6 +43,7 @@ def render_haiku_html(haiku_txt):
 LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
 MORE = 'Еще...'
+NEW = 'Новая тема'
 
 user_format = dict()
 last_user_poems = dict()
@@ -55,7 +59,7 @@ def start(update, context) -> None:
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 15.04.2022).\n\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 03.05.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
                              "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n"
                              "Выберите, что будем сочинять:\n",
@@ -73,7 +77,7 @@ def format_menu(context, callback_data):
     user_format[user_id] = format
     logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
 
-    seeds = seed_generator.generate_seeds(user_id)
+    seeds = seed_generator.generate_seeds(user_id, domain=format)
     keyboard = [seeds]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
@@ -81,20 +85,22 @@ def format_menu(context, callback_data):
                                        per_user=True)
 
     if user_format[user_id] == 'хайку':
-        help_text = 'Включен режим <b>хайку</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n\n' \
+        help_text = 'Включен режим <b>хайку</b>.\n\n' \
+                    'Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
                     'и я сочиню хайку с этими словами. '
     elif user_format[user_id] == 'бусидо':
-        help_text = 'Включен режим <b>бусидо</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+        help_text = 'Включен режим <b>бусидо</b>.\n\n' \
                     'Бусидо - это короткий афористичный текст с привкусом восточной мудрости.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
                     'и я сочиню бусидо с этими словами. '
     else:
         raise NotImplementedError()
 
     help_text += 'Либо выберите готовую затравку из предложенных - см. кнопки внизу.\n\n' \
-                 'Кнопка [<b>Ещё</b>] выведет новый вариант текста на заданную тему.'
+                 'Кнопка [<b>Ещё</b>] выведет новый вариант текста на ранее заданную тему, а [<b>Новая тема</b>] выведет новые затравки.'
 
     context.callback_query.message.reply_text(text=help_text, reply_markup=reply_markup, parse_mode='HTML')
     return
@@ -105,6 +111,7 @@ def echo(update, context):
     # update.chat.last_name
     try:
         user_id = get_user_id(update)
+        format = user_format.get(user_id, 'хайку')
 
         if update.message.text == MORE:
             # Выведем следующее из уже сгенерированных
@@ -113,9 +120,9 @@ def echo(update, context):
             last_user_poems[user_id] = last_user_poems[user_id][1:]
 
             if len(last_user_poems[user_id]):
-                keyboard = [[LIKE, DISLIKE, MORE]]
+                keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
-                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id, domain=format)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -125,6 +132,23 @@ def echo(update, context):
             context.bot.send_message(chat_id=update.message.chat_id,
                                      text=render_haiku_html(last_user_poem[user_id]),
                                      reply_markup=reply_markup, parse_mode='HTML')
+
+            return
+
+        if update.message.text == NEW:
+            # Пользователь хочет, чтобы ему предложили новые саджесты для генерации.
+            last_user_poem[user_id] = None
+            last_user_poems[user_id] = []
+
+            keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
+            reply_markup = ReplyKeyboardMarkup(keyboard,
+                                               one_time_keyboard=True,
+                                               resize_keyboard=True,
+                                               per_user=True)
+
+            context.bot.send_message(chat_id=update.message.chat_id,
+                                     text='Выбирайте один из саджестов на кнопках внизу',
+                                     reply_markup=reply_markup)
 
             return
 
@@ -152,7 +176,6 @@ def echo(update, context):
 
         context.bot.send_message(chat_id=update.message.chat_id, text='Минуточку...')
 
-        format = user_format.get(user_id, 'хайку')
         seed = update.message.text
         logging.info('Will generate a %s using seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
@@ -172,10 +195,14 @@ def echo(update, context):
                         if p_plagiat < 0.90:
                             haikux2.append(haiku)
             else:
-                p_plagiat = antiplagiat.score(haiku)
-                logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
-                if p_plagiat < 0.90:
-                    haikux2.append(haiku)
+                if format == 'бусидо':
+                    if is_good_busido(haiku, udpipe):
+                        p_plagiat = antiplagiat.score(haiku)
+                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                        if p_plagiat < 0.90:
+                            haikux2.append(haiku)
+                    else:
+                        logging.error('Bad busido generated: %s', haiku)
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
@@ -189,9 +216,9 @@ def echo(update, context):
 
         if last_user_poem[user_id]:
             if len(last_user_poems[user_id]):
-                keyboard = [[LIKE, DISLIKE, MORE]]
+                keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
-                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id, domain=format)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -202,7 +229,7 @@ def echo(update, context):
                                      text=render_haiku_html(last_user_poem[user_id]),
                                      reply_markup=reply_markup, parse_mode='HTML')
         else:
-            keyboard = [seed_generator.generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
@@ -215,6 +242,18 @@ def echo(update, context):
     except Exception as ex:
         logging.error('Error in "echo"')
         logging.error(ex)  # sys.exc_info()[0]
+
+
+def is_good_busido(busido_text, parser):
+    parsings = parser.parse_text(busido_text)
+    for parsing in parsings:
+        noun_freqs = collections.Counter()
+        for t in parsing:
+            if t.upos in ('PROPN', 'NOUN'):
+                noun_freqs[t.lemma] += 1
+        if len(noun_freqs) > 1 and noun_freqs.most_common(1)[0][1] > 1:
+            return False
+    return True
 
 
 if __name__ == '__main__':
@@ -260,14 +299,19 @@ if __name__ == '__main__':
         with io.open(dataset_path, 'r', encoding='utf-8') as rdr:
             for sample in rdr.read().split('</s>'):
                 text = sample.replace('<s>', '')
-                text = text[text.index('#')+1:].strip()
-                antiplagiat.add_document(text)
+                if '#' in text:
+                    text = text[text.index('#')+1:].strip()
+                    antiplagiat.add_document(text)
     else:
         logging.error('Antiplagiat dataset is not available')
 
     logging.info('Loading the models from "%s"...', models_dir)
     haiku_generator = RugptGenerator()
     haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
+
+    # Парсер будет нужен для отсева текстов бусидо с повторами.
+    udpipe = UdpipeParser()
+    udpipe.load(models_dir)
 
     if mode == 'telegram':
         logging.info('Starting telegram bot')
