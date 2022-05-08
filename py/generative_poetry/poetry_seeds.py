@@ -92,3 +92,5 @@ class SeedGenerator(object):
 
         return list(seeds)
 
+    def restart_user_session(self, user_id):
+        self.user_seeds[user_id] = set()
