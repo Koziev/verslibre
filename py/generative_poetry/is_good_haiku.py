@@ -1,3 +1,11 @@
+"""
+08.05.2022 Добавлено приведение "ё" к "е", чтобы ловить плохие хайку типа:
+
+                в клетке орёл
+                в клетке решка
+                в клетке орел
+"""
+
 import re
 
 
@@ -12,7 +20,7 @@ def is_good_haiku(s):
     # Лягушка прыгнула в пруд.
     # Лягушка прыгнула в пруд.
     # Лягушка прыгнула в пруд…
-    lines = [remove_trailing_punct(x.strip()) for x in s.split('\n')]
+    lines = [remove_trailing_punct(x.strip()).replace('ё', 'е') for x in s.split('\n')]
     if lines[0] == lines[1] or lines[1] == lines[2] or lines[0] == lines[2]:
         return False
 

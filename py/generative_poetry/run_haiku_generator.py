@@ -59,11 +59,14 @@ def start(update, context) -> None:
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 03.05.2022).\n\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 08.05.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
                              "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n"
                              "Выберите, что будем сочинять:\n",
                              reply_markup=reply_markup, parse_mode='HTML')
+
+    last_user_poems[user_id] = []
+    last_user_poem[user_id] = None
 
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
@@ -147,7 +150,7 @@ def echo(update, context):
                                                per_user=True)
 
             context.bot.send_message(chat_id=update.message.chat_id,
-                                     text='Выбирайте один из саджестов на кнопках внизу',
+                                     text='Выбирайте одну из затравок на кнопках внизу',
                                      reply_markup=reply_markup)
 
             return
@@ -208,7 +211,6 @@ def echo(update, context):
         last_user_poem[user_id] = None
 
         for ipoem, haiku in enumerate(haikux2, start=0):
-            msg = haiku
             if ipoem == 1:
                 last_user_poem[user_id] = haiku
             else:
@@ -257,7 +259,7 @@ def is_good_busido(busido_text, parser):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Telegram chatbot')
+    parser = argparse.ArgumentParser(description='Telegram bot for haiku and busido generation')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split())
     parser.add_argument('--models_dir', type=str, default='../../models')
