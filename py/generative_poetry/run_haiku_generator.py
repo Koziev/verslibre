@@ -67,7 +67,7 @@ def start(update, context) -> None:
 
     last_user_poems[user_id] = []
     last_user_poem[user_id] = None
-
+    seed_generator.restart_user_session(user_id)
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
 
