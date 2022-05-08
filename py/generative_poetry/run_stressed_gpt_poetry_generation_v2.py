@@ -11,6 +11,9 @@ End-2-end генерация рифмованного четверостишья
 08.02.2022 В ранжирование результатов генерации добавлена проверка бедной рифмовки (включая повторение рифмуемого слова)
 21.02.2022 Добавлена модель генерации следующих 4х строчек по первому четверостишью.
 26.02.2022 Рефакторинг - генерация стиха, ранжировка и прочее вынесены в отдельный модуль, а тут остается только фронт
+03.05.2022 Добавлена кнопка "Новая тема" для формирования новых саджестов
+08.05.2022 Эксперимент с генерацией рубаи
+08.05.2022 Из телеграм-версии исключен режим моностихов
 """
 
 import os
@@ -56,6 +59,7 @@ FORMAT__COMMON = 'Обычные стихи'
 FORMAT__1LINER = 'Однострочники'
 FORMAT__2LINER = 'Двухстрочники'
 FORMAT__POROSHKI = 'Пирожки и порошки'
+FORMAT__RUBAI = 'Рубаи'
 
 def start(update, context) -> None:
     user_id = get_user_id(update)
@@ -67,16 +71,17 @@ def start(update, context) -> None:
     #                                   resize_keyboard=True,
     #                                   per_user=True)
     keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
+                [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format='+FORMAT__RUBAI)],
                 [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
                 [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
-                [InlineKeyboardButton(FORMAT__1LINER, callback_data='format='+FORMAT__1LINER)],
+                #[InlineKeyboardButton(FORMAT__1LINER, callback_data='format='+FORMAT__1LINER)],
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 04.04.2022).\n" +
-                                  "Для генерации хайку попробуйте @haiku_guru_bot.\n" +
+                                  "Я - бот для генерации стихов (версия от 08.05.2022).\n" +
+                                  "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
                              reply_markup=reply_markup)
@@ -100,6 +105,8 @@ def format_menu(context, callback_data):
         user_format[user_id] = 'двустишье'
     elif format == FORMAT__POROSHKI:
         user_format[user_id] = 'порошок'
+    elif format == FORMAT__RUBAI:
+        user_format[user_id] = 'четверостишье , рубаи'
 
     logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
 
@@ -125,13 +132,17 @@ def format_menu(context, callback_data):
         help_text = 'Включен режим <b>обычных стихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
                     'и я сочиню стишок с этими словами. '
+    elif user_format[user_id] == 'четверостишье , рубаи':
+        help_text = 'Включен режим <b>рубаи</b>, или "филатовской строфы". Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
+                    'и я сочиню рубаи с этими словами. '
     else:
         help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>синица</i>, ' \
                     'и я сочиню стишок-однострочник с этими словами. '
 
     help_text += 'Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n' \
-                 'Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему.'
+                 'Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему. Кнопка [<b>Новая тема</b>] выведет новые затравки.'
 
     context.callback_query.message.reply_text(text=help_text, reply_markup=reply_markup, parse_mode='HTML')
     return
@@ -142,12 +153,13 @@ def echo(update, context):
     # update.chat.last_name
     try:
         user_id = get_user_id(update)
-
-        #msg_text = update.message.text
-
         format = user_format.get(user_id, 'четверостишье')
 
         if update.message.text == NEW:
+            # Пользователь хочет, чтобы ему предложили новые саджесты для генерации.
+            last_user_poem[user_id] = None
+            last_user_poems[user_id] = []
+
             keyboard = [seed_generator.generate_seeds(user_id)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -205,7 +217,7 @@ def echo(update, context):
             last_user_poems[user_id] = last_user_poems[user_id][:-1]
 
             if len(last_user_poems[user_id]):
-                keyboard = [[LIKE, DISLIKE, MORE]]
+                keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
                 keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
@@ -246,7 +258,7 @@ def echo(update, context):
 
         if last_user_poem[user_id]:
             if len(last_user_poems[user_id]):
-                keyboard = [[LIKE, DISLIKE, MORE]]
+                keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
                 keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
 
@@ -276,9 +288,9 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre generator v.11')
+    parser = argparse.ArgumentParser(description='Verslibre generator v.12')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
-    parser.add_argument('--mode', type=str, default='console', choices='console telegram evaluate generate'.split())
+    parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
     parser.add_argument('--data_dir', default='../../data', type=str)
     parser.add_argument('--models_dir', default='../../models', type=str)
@@ -330,48 +342,12 @@ if __name__ == '__main__':
         logging.info('Start polling messages for bot %s', tg_bot.name)
         updater.start_polling()
         updater.idle()
-    elif args.mode == 'evaluate':
-        # Запускаем генерацию много раз со случайными затравками, подсчитываем статистику по оценке качества стихов
-        # с помощью StressedPoetryAligner.
-        top5_scores = []  # накопление оценок для top5 генераций по каждой затравке
-        n_runs = 100
-        n_empty_generations = 0  # кол-во затравок, для которых генератор не выдал ни одной генерации
-
-        for _ in tqdm.tqdm(range(n_runs), total=n_runs):
-            for seed in seed_generator.generate_seeds('evaluation'):
-                ranked_poems = poetry_generator.generate_poems('четверостишье', seed, score_threshold=0.01, verbosity=0)
-                if len(ranked_poems) == 0:
-                    n_empty_generations += 1
-                else:
-                    for poem, score in ranked_poems[:5]:
-                        top5_scores.append(score)
-
-        print('n_empty_generations = {}'.format(n_empty_generations))
-        print('max(top5_scores)    = {}'.format(np.max(top5_scores)))
-        print('mean(top5_scores)   = {}'.format(np.mean(top5_scores)))
-        print('std(top5_score)     = {}'.format(np.var(top5_scores)))
-        #print(stats.describe(top5_scores))
-    elif args.mode == 'generate':
-        # Генерация большого количества стихов с рандомными затравками, запись их в файл,
-        # чтобы можно было отсмотреть результаты и выбрать плохие генерации для добавления
-        # в обучающие датасеты.
-        n_runs = 1000
-        with io.open(os.path.join(tmp_dir, 'stressed_gpt_poetry_generation_v2.output.txt'), 'w', encoding='utf-8') as wrt:
-            for _ in tqdm.tqdm(range(n_runs), total=n_runs):
-                for seed in seed_generator.generate_seeds('generation'):
-                    ranked_poems = poetry_generator.generate_poems('четверостишье', seed, score_threshold=0.20, verbosity=0)
-                    for poem, score in ranked_poems[:5]:
-                        wrt.write('score={:5.3f}\n'.format(score))
-                        wrt.write('='*70 + '\n\n')
-                        wrt.write('\n'.join(poem))
-                        wrt.write('\n\n\n')
-                        wrt.flush()
     else:
         # Тестирование в консоли
-        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n4 - порошки и пирожки\n\n')
+        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n4 - порошки и пирожки\n5 - рубаи\n\n')
         format = None
         while not format:
-            s = input('[0] | 1 | 2 | 4 :> ').strip()
+            s = input('[0] | 1 | 2 | 4 | 5:> ').strip()
             if len(s) == 0:
                 format = 'четверостишье'
                 break
@@ -387,8 +363,11 @@ if __name__ == '__main__':
             elif s == '4':
                 format = 'порошок'
                 break
+            elif s == '5':
+                format = 'четверостишье , рубаи'
+                break
             else:
-                print('Недопустимый выбор, пожалуйста введите один из вариантов 0 | 1 | 2 | 4')
+                print('Недопустимый выбор, пожалуйста введите один из вариантов 0, 1, 2, 4, 5')
 
         while True:
             topic = input(':> ').strip()
@@ -398,7 +377,7 @@ if __name__ == '__main__':
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
 
-                if format == 'четверостишье':
+                if format in ('четверостишье', 'четверостишье , рубаи'):
                     poem = poetry_generator.continue8(poem)
 
                 for line in poem:

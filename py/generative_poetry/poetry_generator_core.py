@@ -3,11 +3,12 @@
 
 15-03-2022 Перенос сюда кода для управления генерацией через коррекцию финальных логитов по спискам
            позитивной и негативной лексики.
+
+08.05.2022 Эксперимент с отдельным тегом для рубаи
 """
 
 import os
 import json
-import random
 import logging
 import traceback
 import warnings
@@ -122,6 +123,42 @@ class ForceTopicWordsLogitsProcessor(transformers.LogitsProcessor):
         #scores = self._set_scores_to_inf_for_banned_tokens(scores, dynamic_banned_tokens)
 
         return scores
+
+
+# https://arxiv.org/pdf/2202.00666.pdf
+# https://github.com/cimeister/typical-sampling/blob/3e676cfd88fa2e6a24f2bdc6f9f07fddb87827c2/src/transformers/generation_logits_process.py#L242-L272
+class TypicalLogitsWarper(transformers.LogitsWarper):
+    def __init__(self, mass: float = 0.9, filter_value: float = -float("Inf"), min_tokens_to_keep: int = 1):
+
+        self.filter_value = filter_value
+        self.mass = mass
+        self.min_tokens_to_keep = min_tokens_to_keep
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+
+        # calculate entropy
+        normalized = torch.nn.functional.log_softmax(scores, dim=-1)
+        p = torch.exp(normalized)
+        ent = -(normalized * p).nansum(-1, keepdim=True)
+
+        # shift and sort
+        shifted_scores = torch.abs((-normalized) - ent)
+        sorted_scores, sorted_indices = torch.sort(shifted_scores, descending=False)
+        sorted_logits = scores.gather(-1, sorted_indices)
+        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+
+        # Remove tokens with cumulative mass above the threshold
+        last_ind = (cumulative_probs < self.mass).sum(dim=1)
+        last_ind[last_ind < 0] = 0
+        sorted_indices_to_remove = sorted_scores > sorted_scores.gather(1, last_ind.view(-1, 1))
+        if self.min_tokens_to_keep > 1:
+            # Keep at least min_tokens_to_keep (set to min_tokens_to_keep-1 because we add the first one below)
+            sorted_indices_to_remove[..., : self.min_tokens_to_keep] = 0
+        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+
+        scores = scores.masked_fill(indices_to_remove, self.filter_value)
+        return scores
+
 
 
 def sample_v2(
@@ -252,6 +289,13 @@ def sample_v2(
         logits_processor.append(logits_booster)
     # конец эксперимента
     # ========================================================
+
+    # НАЧАЛО ЭКСПЕРИМЕНТА С TYPICAL DECODING
+    #logits_warper.clear()
+    #logits_warper.append(TypicalLogitsWarper(mass=0.95))
+    # КОНЕЦ ЭКСПЕРИМЕНТА С TYPICAL DECODING
+
+
 
     # init attention / hidden states / scores tuples
     scores = () if (return_dict_in_generate and output_scores) else None
@@ -468,11 +512,12 @@ class RugptGenerator:
 
         self.model.to(self.device)
 
-    def generate_output(self, context, num_return_sequences=10, temperature=1.0, positive_words=None, negative_words=None):
+    def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40, positive_words=None, negative_words=None):
         global logits_booster
 
-        top_k = 30
-        top_p = 0.85
+        #top_k = 30
+        #top_p = 0.85
+        #top_p = 0.40
         repetition_penalty = 1.0
         prompt_text = "<s> " + context + ' $'
         stop_token = "</s>"
@@ -636,13 +681,17 @@ class PoetryGeneratorCore(object):
 
         self.aligner = PoetryStressAligner(self.udpipe, self.accents, os.path.join(data_dir, 'poetry', 'dict'))
 
-    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30, positive_words=None, negative_words=None):
+    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30, positive_words=None, negative_words=None,
+                       temperature=1.0, top_p=0.5, top_k=30):
         try:
             seed = arabize(break_to_syllables(self.udpipe, self.accents, format + ' , ' + topic))
             poems = self.poem_generator.generate_output(seed,
                                                         num_return_sequences=num_return_sequences,
                                                         positive_words=positive_words,
-                                                        negative_words=negative_words)
+                                                        negative_words=negative_words,
+                                                        temperature=temperature,
+                                                        top_p=top_p,
+                                                        top_k=top_k)
         except Exception as ex:
             logging.error(ex)
             return []
@@ -652,7 +701,7 @@ class PoetryGeneratorCore(object):
         # ===============================================================
         ranked_poems = []
 
-        if format == 'четверостишье':
+        if format in ('четверостишье', 'четверостишье , рубаи'):
             do_check_rhymes = True
             score_threshold = 0.05
             lines_count = 4
