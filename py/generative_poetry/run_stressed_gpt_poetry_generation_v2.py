@@ -65,6 +65,9 @@ def start(update, context) -> None:
     user_id = get_user_id(update)
     logging.debug('Entering START callback with user_id=%s', user_id)
 
+    # 08.05.2022 сбросим историю использованных затравок
+    seed_generator.restart_user_session(user_id)
+
     #keyboard = [[FORMAT__COMMON], [FORMAT__POROSHKI], [FORMAT__2LINER], [FORMAT__1LINER]]
     #reply_markup = ReplyKeyboardMarkup(keyboard,
     #                                   one_time_keyboard=True,
@@ -210,7 +213,7 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
-            if format == 'четверостишье':
+            if format in ('четверостишье', 'четверостишье , рубаи'):
                 poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
