@@ -875,62 +875,84 @@ class PoetryStressAligner(object):
             # plinev это набор из четырех экземпляров LineStressVariant.
 
             # Проверим, что эти 4 строки имеют рифмовку
-            if check_rhymes:
-                rhyme_scheme = None
-                last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
-                # TODO - можно закэшировать проверки пар, так как обычно последние слова не вариативны.
+            rhyme_scheme = '----'
+            rhyming_score = 0.0
+            mapped_meter = None
 
-                # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
-                # желательно устранять из обучающего датасета.
-                if self.check_rhyming(last_pwords[0], last_pwords[1]) and self.check_rhyming(last_pwords[1], last_pwords[2]):
-                    rhyme_scheme = 'AAAA'
-                elif self.check_rhyming(last_pwords[0], last_pwords[2]) and self.check_rhyming(last_pwords[1], last_pwords[3]):
-                    # Считаем, что слово не рифмуется само с собой, чтобы не делать для отсечения
-                    # таких унылых рифм отдельную проверку в другой части кода.
-                    if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                        rhyme_scheme = 'ABAB'
-                elif self.check_rhyming(last_pwords[0], last_pwords[3]) and self.check_rhyming(last_pwords[1], last_pwords[2]):
-                    if last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower():
-                        rhyme_scheme = 'ABBA'
-                # 22-12-2021 добавлена рифмовка AABB
-                elif self.check_rhyming(last_pwords[0], last_pwords[1]) and self.check_rhyming(last_pwords[2], last_pwords[3]):
-                    if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[2].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                        rhyme_scheme = 'AABB'
-                # 28-12-2021 добавлена рифмовка "рубаи" AABA
-                elif self.check_rhyming(last_pwords[0], last_pwords[1]) and\
-                     self.check_rhyming(last_pwords[0], last_pwords[3]) and\
-                     not self.check_rhyming(last_pwords[0], last_pwords[2]):
-                    if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                        rhyme_scheme = 'AABA'
+            # проверяем все пары слов
+            last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+            r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
+            r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
+            r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
+            r12 = self.check_rhyming(last_pwords[1], last_pwords[2])
+            r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
+            r23 = self.check_rhyming(last_pwords[2], last_pwords[3])
+
+            # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
+            # желательно устранять из обучающего датасета.
+            if r01 and r12:
+                rhyme_scheme = 'AAAA'
+            elif r02 and r13:
+                # Считаем, что слово не рифмуется само с собой, чтобы не делать для отсечения
+                # таких унылых рифм отдельную проверку в другой части кода.
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
+                    rhyme_scheme = 'ABAB'
+            elif r03 and r12:
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower():
+                    rhyme_scheme = 'ABBA'
+            # 22-12-2021 добавлена рифмовка AABB
+            elif r01 and r23:
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[2].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
+                    rhyme_scheme = 'AABB'
+            # 28-12-2021 добавлена рифмовка "рубаи" AABA
+            elif r01 and r03 and not r02:
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
+                    rhyme_scheme = 'AABA'
+            # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
+            elif r02 and not r13:
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
+                    rhyme_scheme = 'A-A-'
+            elif not r02 and r13:
+                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
+                    rhyme_scheme = '-A-A'
             else:
-                rhyme_scheme = 'ABAB'
+                rhyme_scheme = '----'
 
-            if rhyme_scheme is not None:
-                rhyming_score = 0.0
-                mapped_meter = None
-                if rhyme_scheme == 'ABAB':
-                    # Оцениваем, насколько хорошо соответствуют сигнатуры строк для схемы рифмовки ABAB
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
-                    rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-                elif rhyme_scheme == 'ABBA':
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[3]), (plinev[1], plinev[2])])
-                    rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-                elif rhyme_scheme == 'AABB':
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1]), (plinev[2], plinev[3])])
-                    rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-                elif rhyme_scheme == 'AABA':
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
-                    rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
-                else:
+            rhyming_score = 0.0
+            mapped_meter = None
+            if rhyme_scheme == 'ABAB':
+                # Оцениваем, насколько хорошо соответствуют сигнатуры строк для схемы рифмовки ABAB
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
+            elif rhyme_scheme == 'ABBA':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[3]), (plinev[1], plinev[2])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
+            elif rhyme_scheme == 'AABB':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1]), (plinev[2], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
+            elif rhyme_scheme == 'AABA':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
+            elif rhyme_scheme == 'A-A-':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
+            elif rhyme_scheme == '-A-A':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
+            else:
+                if check_rhymes:
                     raise NotImplementedError()
+                else:
+                    rhyming_score = 0.8
+                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
 
-                score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-                if score > best_score:
-                    best_variant = plinev
-                    best_score = score
-                    best_meter = mapped_meter
-                    best_ivar = ivar
-                    best_rhyme_scheme = rhyme_scheme
+            score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
+            if score > best_score:
+                best_variant = plinev
+                best_score = score
+                best_meter = mapped_meter
+                best_ivar = ivar
+                best_rhyme_scheme = rhyme_scheme
 
         if best_rhyme_scheme is None:
             # Не получилось подобрать рифмовку окончаний строк.
