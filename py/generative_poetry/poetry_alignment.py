@@ -941,9 +941,9 @@ class PoetryStressAligner(object):
                 rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
             else:
                 if check_rhymes:
-                    raise NotImplementedError()
+                    continue
                 else:
-                    rhyming_score = 0.8
+                    rhyming_score = 0.5
                     score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
 
             score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
@@ -954,11 +954,12 @@ class PoetryStressAligner(object):
                 best_ivar = ivar
                 best_rhyme_scheme = rhyme_scheme
 
-        if best_rhyme_scheme is None:
-            # Не получилось подобрать рифмовку окончаний строк.
-            # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
-            # можно было вывести в лог строки с каким-то дефолтными
-            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+        if best_rhyme_scheme is None or best_rhyme_scheme == '----':
+            if check_rhymes:
+                # Не получилось подобрать рифмовку окончаний строк.
+                # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
+                # можно было вывести в лог строки с каким-то дефолтными
+                return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
 
         # Возвращаем найденный вариант разметки и его оценку
         return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
@@ -1164,27 +1165,33 @@ if __name__ == '__main__':
 
     aligner = PoetryStressAligner(udpipe, accents, os.path.join(data_dir, 'poetry', 'dict'))
 
-    x = accents.get_accent('самоцветы')
-    print(x)
+    #x = accents.get_accent('самоцветы')
+    #print(x)
 
     # ================================================
 
-    alignment = aligner.build_from_markup('Без му́́ки не́т и нау́ки.')
-    print('\n' + alignment.get_stressed_lines() + '\n')
+    #alignment = aligner.build_from_markup('Без му́́ки не́т и нау́ки.')
+    #print('\n' + alignment.get_stressed_lines() + '\n')
 
     # ================================================
+    #         ===== ТУТ БУДУТ АВТОТЕСТЫ ===
 
-    poem = """Махаончик наш пушист
-Приставуч, как банный лист
-Он мяукает, как кошка
-И изящен, словно глист"""
-    poem = [z.strip() for z in poem.split('\n') if z.strip()]
-
-    alignment = aligner.align(poem)
-    print(alignment)
-    print('='*80)
+    true_markup = """пролета́ет ле́то
+гру́сти не тая́
+и аналоги́чно
+пролета́ю я́"""
+    poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
+    alignment = aligner.align(poem, check_rhymes=False)
+    #print(alignment)
+    #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
+    #print('='*80)
     #print(alignment.get_unstressed_lines())
-    for pline in alignment.poetry_lines:
-        print(pline.stress_signature_str)
+    #for pline in alignment.poetry_lines:
+    #    print(pline.stress_signature_str)
+    pred_markup = alignment.get_stressed_lines()
+    if pred_markup != true_markup:
+        print('Markup test failed')
+        print('Expected:\n{}\n\nOutput:\n{}'.format(true_markup, pred_markup))
+        exit(0)
 
-    print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
+
