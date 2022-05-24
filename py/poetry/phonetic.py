@@ -820,6 +820,13 @@ if __name__ == '__main__':
     data_folder = '../../data/poetry/dict'
     tmp_dir = '../../tmp'
 
+    # Проверим валидность содержимого файла с неоднозначными ударениями.
+    ambiguous_accents2 = yaml.safe_load(io.open(os.path.join(data_folder, 'ambiguous_accents_2.yaml'), 'r', encoding='utf-8').read())
+    for key, vars in ambiguous_accents2.items():
+        if not all((len(re.findall('[АЕЁИОУЫЭЮЯ]', s)) == 1) for s in vars):
+            print('Файл "ambiguous_accents_2.yaml" для статьи "{}" содержит вариант без ударности: {}'.format(key, ' '.join(vars)))
+            exit(0)
+
     # НАЧАЛО ОТЛАДКИ
     if False:
         accents = Accents()
