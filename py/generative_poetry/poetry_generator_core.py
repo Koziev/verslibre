@@ -5,6 +5,8 @@
            позитивной и негативной лексики.
 
 08.05.2022 Эксперимент с отдельным тегом для рубаи
+25.05.2022 Для частушек (или возможно других жанров) в конце строк не отсекаются знаки препинания, поэтому не считаем
+           повтором рифмовки ситуацию повтора пунктуатора перед <nl>
 """
 
 import os
@@ -388,6 +390,8 @@ def sample_v2(
         break_token_id = self.tokenizer.vocab['|']
         prompt_token_id = self.tokenizer.vocab['$']  # символ для отделения затравки и тела стиха
 
+        punkt_ids = [self.tokenizer.vocab[c] for c in '.,!?;:-=()•…—–➖' if c in self.tokenizer.vocab]
+
         input_ids_2 = input_ids.cpu().numpy()
         # НАЧАЛО ОТЛАДКИ
         #input_ids_2 = np.asarray([[2938, 25608, 12894, 20772, 13641, 20772, 8969, 22282, 24705, 20772, 13641, 20772, 14627, 20772, 13641, 20772, 15751, 20772, 17874, 20772, 3638, 20772, 22030, 20772, 24341, 11959, 5, 25604, 20772, 1017, 19467, 20772, 3413, 10931, 9189, 20772, 18333, 20772, 12038, 19142, 20772, 24341, 20772, 20317, 5, 2938, 25608, 12894, 20772, 22030, 20772, 9382, 4235, 671, 20772, 17993, 20772, 20523, 14097, 12138, 20772, 6127, 20772, 13641, 20772, 6710, 20772, 9382, 11225, 20772, 20317, 5, 9783, 9245, 20772, 6920, 6345, 20772, 24975, 20772, 13641, 20772, 7355, 11225, 20772, 13641, 20772, 1003, 21359, 20772, 3372, 21333, 20772, 23719, 5, 2]], dtype=np.int)
@@ -407,13 +411,19 @@ def sample_v2(
                 elif x == break_token_id:
                     if state == 'nl_hit':  # нас интересует первое слово после "<nl>" или "$" (так как у нас цепочки right2left, то это фактически последнее слово в строке)
                         rhyme = ' '.join(map(str, row_ids[last_nl_pos+1: j]))
-                        if rhyme in rhymes:
-                            bad_row = True
-                            nb_bad_rows += 1
-                            break
-                        else:
-                            rhymes.append(rhyme)
+                        # 25.05.2022 для частушек (или возможно других жанров) в конце строк не отсекаются знаки препинания,
+                        # поэтому мы не должны реагировать на пунктуаторы в этом коде. В идеале надо бы пропустить пунктуатор и выделить
+                        # следующее слово, и уже его использовать в проверке повтора рифмовки.
+                        if rhyme.count(' ') == 0 and int(rhyme) in punkt_ids:
                             state = 'break_hit'
+                        else:
+                            if rhyme in rhymes:
+                                bad_row = True
+                                nb_bad_rows += 1
+                                break
+                            else:
+                                rhymes.append(rhyme)
+                                state = 'break_hit'
 
             if bad_row:
                 row_validity[irow] = False
@@ -701,7 +711,7 @@ class PoetryGeneratorCore(object):
         # ===============================================================
         ranked_poems = []
 
-        if format in ('четверостишье', 'четверостишье , рубаи'):
+        if format in 'четверостишье|детский стишок|философия|юмор|рубаи|мистика|частушка'.split('|'):
             do_check_rhymes = True
             score_threshold = 0.05
             lines_count = 4
@@ -716,7 +726,7 @@ class PoetryGeneratorCore(object):
             elif format == 'порошок':
                 lines_count = 4
             else:
-                logging.error('Unknown target poetry format "%s" for user "%s"', format)
+                logging.error('Unknown target poetry format "%s"', format)
                 raise ValueError(format)
 
         for ipoem, poem in enumerate(poems):
@@ -727,6 +737,9 @@ class PoetryGeneratorCore(object):
                 try:
                     a = self.aligner.align(lines, check_rhymes=do_check_rhymes)
                     if a is not None:
+                        if a.rhyme_scheme == '----' and do_check_rhymes:
+                            continue
+
                         score = a.score
 
                         if self.aligner.detect_repeating(a):
