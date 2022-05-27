@@ -14,6 +14,8 @@ End-2-end генерация рифмованного четверостишья
 03.05.2022 Добавлена кнопка "Новая тема" для формирования новых саджестов
 08.05.2022 Эксперимент с генерацией рубаи
 08.05.2022 Из телеграм-версии исключен режим моностихов
+24.05.2022 Добавлен второй уровень рубрикации четверостиший - выделены рубаи, частушки, мистика и т.д.
+27.05.2022 В режиме генерации рубаи не делается продолжение (след. 4 строки по первым 4м)
 """
 
 import os
@@ -59,6 +61,7 @@ FORMAT__COMMON = 'Обычные стихи'
 FORMAT__1LINER = 'Однострочники'
 FORMAT__2LINER = 'Двухстрочники'
 FORMAT__POROSHKI = 'Пирожки и порошки'
+
 FORMAT__RUBAI = 'Рубаи'
 
 def start(update, context) -> None:
@@ -68,22 +71,15 @@ def start(update, context) -> None:
     # 08.05.2022 сбросим историю использованных затравок
     seed_generator.restart_user_session(user_id)
 
-    #keyboard = [[FORMAT__COMMON], [FORMAT__POROSHKI], [FORMAT__2LINER], [FORMAT__1LINER]]
-    #reply_markup = ReplyKeyboardMarkup(keyboard,
-    #                                   one_time_keyboard=True,
-    #                                   resize_keyboard=True,
-    #                                   per_user=True)
     keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
-                [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format='+FORMAT__RUBAI)],
                 [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
                 [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
-                #[InlineKeyboardButton(FORMAT__1LINER, callback_data='format='+FORMAT__1LINER)],
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 08.05.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 27.05.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
@@ -101,15 +97,30 @@ def format_menu(context, callback_data):
     format = callback_data.match.string.split('=')[1]
 
     if format == FORMAT__COMMON:
+        # Уточняем жанр/тему
+        keyboard = [[InlineKeyboardButton('лирика', callback_data='format=' + 'лирика')],
+                    [InlineKeyboardButton('стихи для детей', callback_data='format=' + 'детский стишок')],
+                    [InlineKeyboardButton('философия', callback_data='format=' + 'философия')],
+                    [InlineKeyboardButton('юмор', callback_data='format=' + 'юмор')],
+                    [InlineKeyboardButton('рубаи', callback_data='format=' + 'рубаи')],
+                    [InlineKeyboardButton('мистика', callback_data='format=' + 'мистика')],
+                    [InlineKeyboardButton('частушки', callback_data='format=' + 'частушка')],
+                    ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        context.callback_query.message.reply_text(text='Уточните жанр', reply_markup=reply_markup, parse_mode='HTML')
+        return
+
+    elif format == 'лирика':
         user_format[user_id] = 'четверостишье'
+    elif format in ('детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
+        user_format[user_id] = format
     elif format == FORMAT__1LINER:
         user_format[user_id] = 'одностишье'
     elif format == FORMAT__2LINER:
         user_format[user_id] = 'двустишье'
     elif format == FORMAT__POROSHKI:
         user_format[user_id] = 'порошок'
-    elif format == FORMAT__RUBAI:
-        user_format[user_id] = 'четверостишье , рубаи'
 
     logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
 
@@ -128,17 +139,29 @@ def format_menu(context, callback_data):
                     'и я сочиню пирожок с этими словами. '
     elif user_format[user_id] == 'двустишье':
         help_text = 'Включен режим <b>полупирожков-двустрочников</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'В этих стихах часто нет рифмы, бывает лексика 18+.\n\n' \
+                    'В этих стихах часто нет рифмы, встречается лексика 18+.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
                     'и я сочиню двустрочник с этими словами. '
-    elif user_format[user_id] == 'четверостишье':
-        help_text = 'Включен режим <b>обычных стихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
+    elif user_format[user_id] in ('четверостишье', 'детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
+        s = ''
+        if user_format[user_id] == 'четверостишье':
+            s = 'лирических стихов'
+        elif user_format[user_id] == 'детский стишок':
+            s = 'стихов для детей'
+        elif user_format[user_id] == 'философия':
+            s = 'стихов на философские темы'
+        elif user_format[user_id] == 'юмор':
+            s = 'юмористических стихов'
+        elif user_format[user_id] == 'рубаи':
+            s = 'рубаи'
+        elif user_format[user_id] == 'мистика':
+            s = 'стихов на тему мистики'
+        elif user_format[user_id] == 'частушка':
+            s = 'частушек'
+
+        help_text = 'Включен режим <b>' + s + '</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
                     'и я сочиню стишок с этими словами. '
-    elif user_format[user_id] == 'четверостишье , рубаи':
-        help_text = 'Включен режим <b>рубаи</b>, или "филатовской строфы". Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
-                    'и я сочиню рубаи с этими словами. '
     else:
         help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>синица</i>, ' \
@@ -213,7 +236,7 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
-            if format in ('четверостишье', 'четверостишье , рубаи'):
+            if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
                 poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
@@ -252,7 +275,7 @@ def echo(update, context):
 
         for ipoem, (poem, score) in enumerate(poems2, start=1):
             if ipoem == 1:
-                if format == 'четверостишье':
+                if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
                     poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
                 last_user_poem[user_id] = poem
@@ -291,7 +314,7 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre generator v.12')
+    parser = argparse.ArgumentParser(description='Verslibre generator v.13')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
@@ -347,15 +370,31 @@ if __name__ == '__main__':
         updater.idle()
     else:
         # Тестирование в консоли
-        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n4 - порошки и пирожки\n5 - рубаи\n\n')
+        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n3 - порошки и пирожки\n\n')
         format = None
         while not format:
-            s = input('[0] | 1 | 2 | 4 | 5:> ').strip()
-            if len(s) == 0:
-                format = 'четверостишье'
-                break
-            elif s == '0':
-                format = 'четверостишье'
+            s = input('[0] | 1 | 2 | 3 :> ').strip()
+            if len(s) == 0 or s == '0':
+                while not format:
+                    print('Тема: 0 - лирика, 1 - детский стишок, 2 - философия, 3 - юмор, 4 - рубаи, 5 - мистика, 6 - частушка')
+                    s = input(':> ').strip()
+                    if s == '0':
+                        format = 'четверостишье'
+                    elif s == '1':
+                        format = 'детский стишок'
+                    elif s == '2':
+                        format = 'философия'
+                    elif s == '3':
+                        format = 'юмор'
+                    elif s == '4':
+                        format = 'рубаи'
+                    elif s == '5':
+                        format = 'мистика'
+                    elif s == '6':
+                        format = 'частушка'
+                    else:
+                        print('Некорректный вариант!')
+
                 break
             elif s == '1':
                 format = 'одностишье'
@@ -363,14 +402,14 @@ if __name__ == '__main__':
             elif s == '2':
                 format = 'двустишье'
                 break
-            elif s == '4':
+            elif s == '3':
                 format = 'порошок'
                 break
-            elif s == '5':
-                format = 'четверостишье , рубаи'
-                break
             else:
-                print('Недопустимый выбор, пожалуйста введите один из вариантов 0, 1, 2, 4, 5')
+                print('Недопустимый выбор, пожалуйста введите один из вариантов 0, 1, 2, 3')
+
+        print('формат={}'.format(format))
+        print('Вводите затравку для генерации\n')
 
         while True:
             topic = input(':> ').strip()
@@ -380,7 +419,7 @@ if __name__ == '__main__':
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
 
-                if format in ('четверостишье', 'четверостишье , рубаи'):
+                if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
                     poem = poetry_generator.continue8(poem)
 
                 for line in poem:
