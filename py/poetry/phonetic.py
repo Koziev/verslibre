@@ -489,6 +489,10 @@ class Accents:
             if stem in self.word_accents_dict:
                 return self.word_accents_dict[stem]
 
+        if vowel_count == 0:
+            # знаки препинания и т.д., в которых нет ни одной гласной.
+            return -1
+
         if True:
             return self.predict_stress(word)
 
