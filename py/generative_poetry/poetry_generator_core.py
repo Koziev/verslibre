@@ -411,11 +411,11 @@ def sample_v2(
                     last_nl_pos = j
                 elif x == break_token_id:
                     if state == 'nl_hit':  # нас интересует первое слово после "<nl>" или "$" (так как у нас цепочки right2left, то это фактически последнее слово в строке)
-                        rhyme = ' '.join(map(str, row_ids[last_nl_pos+1: j]))
+                        rhyme = ' '.join(map(str, row_ids[last_nl_pos+1: j])).strip()
                         # 25.05.2022 для частушек (или возможно других жанров) в конце строк не отсекаются знаки препинания,
                         # поэтому мы не должны реагировать на пунктуаторы в этом коде. В идеале надо бы пропустить пунктуатор и выделить
                         # следующее слово, и уже его использовать в проверке повтора рифмовки.
-                        if rhyme.count(' ') == 0 and int(rhyme) in punkt_ids:
+                        if rhyme and rhyme.count(' ') == 0 and int(rhyme) in punkt_ids:
                             state = 'break_hit'
                         else:
                             if rhyme in rhymes:
@@ -712,9 +712,13 @@ class PoetryGeneratorCore(object):
         # ===============================================================
         ranked_poems = []
 
-        if format in 'четверостишье|детский стишок|философия|юмор|рубаи|мистика|частушка'.split('|'):
+        if format in 'четверостишье|детский стишок|философия|юмор|мистика'.split('|'):
             do_check_rhymes = True
             score_threshold = 0.05
+            lines_count = 4
+        elif format in 'рубаи|частушка'.split('|'):
+            do_check_rhymes = False
+            score_threshold = 0.00
             lines_count = 4
         else:
             # для моностихов, двустрочников и порошков рифмовку не проверяем!
