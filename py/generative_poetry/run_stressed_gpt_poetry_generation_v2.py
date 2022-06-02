@@ -370,45 +370,46 @@ if __name__ == '__main__':
         updater.idle()
     else:
         # Тестирование в консоли
-        print('Выберите формат генерации:\n\n0 - обычные стихи\n1 - моностихи\n2 - двустрочники\n3 - порошки и пирожки\n\n')
+        menu = """Выберите жанр:
+1 - моностихи
+2 - двустрочники
+3 - порошки и пирожки
+4 - лирика
+5 - детский стишок
+6 - философия
+7 - юмор
+8 - рубаи
+9 - мистика
+10 - частушка
+"""
+        print(menu)
         format = None
         while not format:
-            s = input('[0] | 1 | 2 | 3 :> ').strip()
-            if len(s) == 0 or s == '0':
-                while not format:
-                    print('Тема: 0 - лирика, 1 - детский стишок, 2 - философия, 3 - юмор, 4 - рубаи, 5 - мистика, 6 - частушка')
-                    s = input(':> ').strip()
-                    if s == '0':
-                        format = 'четверостишье'
-                    elif s == '1':
-                        format = 'детский стишок'
-                    elif s == '2':
-                        format = 'философия'
-                    elif s == '3':
-                        format = 'юмор'
-                    elif s == '4':
-                        format = 'рубаи'
-                    elif s == '5':
-                        format = 'мистика'
-                    elif s == '6':
-                        format = 'частушка'
-                    else:
-                        print('Некорректный вариант!')
-
-                break
-            elif s == '1':
+            s = input('1 ... 10 :> ').strip()
+            if s == '1':
                 format = 'одностишье'
-                break
             elif s == '2':
                 format = 'двустишье'
-                break
             elif s == '3':
                 format = 'порошок'
-                break
+            elif s == '4':
+                format = 'четверостишье'
+            elif s == '5':
+                format = 'детский стишок'
+            elif s == '6':
+                format = 'философия'
+            elif s == '7':
+                format = 'юмор'
+            elif s == '8':
+                format = 'рубаи'
+            elif s == '9':
+                format = 'мистика'
+            elif s == '10':
+                format = 'частушка'
             else:
-                print('Недопустимый выбор, пожалуйста введите один из вариантов 0, 1, 2, 3')
+                print('Некорректный вариант!')
 
-        print('формат={}'.format(format))
+        print('\nформат={}\n'.format(format))
         print('Вводите затравку для генерации\n')
 
         while True:
