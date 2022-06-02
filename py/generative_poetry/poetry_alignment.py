@@ -19,7 +19,7 @@ import math
 import jellyfish
 import re
 
-from poetry.phonetic import Accents, rhymed2
+from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy
 from generative_poetry.udpipe_parser import UdpipeParser
 from generative_poetry.stanza_parser import StanzaParser
 from generative_poetry.metre_classifier import get_syllables
@@ -817,9 +817,6 @@ class PoetryStressAligner(object):
             raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
 
     def check_rhyming(self, poetry_word1, poetry_word2):
-        #return rhymed(self.accentuator,
-        #              poetry_word1.form, [poetry_word1.upos] + poetry_word1.tags,
-        #              poetry_word2.form, [poetry_word2.upos] + poetry_word2.tags)
         # 01.02.2022 проверяем слова с ударениями по справочнику рифмовки
         f1 = poetry_word1.stressed_form
         f2 = poetry_word2.stressed_form
@@ -829,6 +826,24 @@ class PoetryStressAligner(object):
         return rhymed2(self.accentuator,
                        poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
                        poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
+
+    def check_fuzzy_rhyming(self, poetry_word1, poetry_word2):
+        f1 = poetry_word1.stressed_form
+        f2 = poetry_word2.stressed_form
+        if (f1, f2) in self.accentuator.rhymed_words or (f2, f1) in self.accentuator.rhymed_words:
+            return True
+
+        if rhymed2(self.accentuator,
+                   poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
+                   poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags
+                  ):
+            return 1.0
+
+        fres = rhymed_fuzzy(self.accentuator,
+                            poetry_word1.poetry_word.form, poetry_word1.new_stress_pos,
+                            poetry_word2.poetry_word.form, poetry_word2.new_stress_pos)
+        return fres
+
 
     def _align_line_group(self, metre_signature, lines):
         line1 = lines[0]
@@ -851,6 +866,49 @@ class PoetryStressAligner(object):
                 best_meter = metre_name
 
         return best_score, best_meter
+
+    def align_AABA(self, lines):
+        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+
+        # Список вариантов простановки ударения с учётом опциональности ударений для союзов, предлогов и т.д.
+        plinevx = [pline.get_stress_variants(self) for pline in plines]
+
+        # Идем по списку вариантов, отображаем на эталонные метры и ищем лучший вариант.
+        best_variant = None
+        best_score = -1.0
+        best_meter = None
+        best_ivar = None
+        best_rhyme_scheme = None
+
+        total_permutations = reduce(lambda x, y: x * y, [len(z) for z in plinevx])
+        if total_permutations > 10000:
+            raise ValueError('Too many optional stresses: {}'.format(total_permutations))
+
+        vvx = list(itertools.product(*plinevx))
+
+        for ivar, plinev in enumerate(vvx):
+            # plinev это набор из четырех экземпляров LineStressVariant.
+
+            last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+            r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
+            r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
+            r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
+
+            if r01 and r13 and not r02:
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
+
+                score = score1234 * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
+                if score > best_score:
+                    best_variant = plinev
+                    best_score = score
+                    best_meter = mapped_meter
+                    best_ivar = ivar
+                    best_rhyme_scheme = 'AABA'
+
+        if best_variant is None:
+            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+        else:
+            return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
 
     def align4(self, lines, check_rhymes):
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
@@ -1176,22 +1234,30 @@ if __name__ == '__main__':
     # ================================================
     #         ===== ТУТ БУДУТ АВТОТЕСТЫ ===
 
-    true_markup = """пролета́ет ле́то
-гру́сти не тая́
-и аналоги́чно
-пролета́ю я́"""
-    poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
-    alignment = aligner.align(poem, check_rhymes=False)
-    #print(alignment)
-    #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
-    #print('='*80)
-    #print(alignment.get_unstressed_lines())
-    #for pline in alignment.poetry_lines:
-    #    print(pline.stress_signature_str)
-    pred_markup = alignment.get_stressed_lines()
-    if pred_markup != true_markup:
-        print('Markup test failed')
-        print('Expected:\n{}\n\nOutput:\n{}'.format(true_markup, pred_markup))
-        exit(0)
+    true_markups = [
+#                    """шу́зы промо́кли бе́сит сля́коть
+#печа́ль боже́ственным клише́
+#я́ гидротеософофо́бка
+#в душе́""",
+        """пролета́ет ле́то
+        гру́сти не тая́
+        и аналоги́чно
+        пролета́ю я́""",
+]
+
+    for true_markup in true_markups:
+        poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
+        alignment = aligner.align(poem, check_rhymes=False)
+        #print(alignment)
+        #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
+        #print('='*80)
+        #print(alignment.get_unstressed_lines())
+        #for pline in alignment.poetry_lines:
+        #    print(pline.stress_signature_str)
+        pred_markup = alignment.get_stressed_lines()
+        if pred_markup != true_markup:
+            print('Markup test failed')
+            print('Expected:\n{}\n\nOutput:\n{}'.format(true_markup, pred_markup))
+            exit(0)
 
 
