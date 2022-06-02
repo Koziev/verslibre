@@ -520,8 +520,8 @@ class RugptGenerator:
         self.model.sample = sample_v2.__get__(self.model)  # меням на свой сэмплер
 
         self.model.tokenizer = self.tokenizer  # он нам понадобится внутри нашей версии sample()
-
         self.model.to(self.device)
+        self.model.eval()
 
     def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40, positive_words=None, negative_words=None):
         global logits_booster
