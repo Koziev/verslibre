@@ -57,12 +57,17 @@ last_user_poem = dict()
 user_format = dict()
 
 
-FORMAT__COMMON = 'Обычные стихи'
+FORMAT__COMMON = 'Лирика'
 FORMAT__1LINER = 'Однострочники'
 FORMAT__2LINER = 'Двухстрочники'
 FORMAT__POROSHKI = 'Пирожки и порошки'
-
 FORMAT__RUBAI = 'Рубаи'
+FORMAT__KID = "Для детей"
+FORMAT__PHIL = "Философские"
+FORMAT__HUM = "Юмор и сатира"
+FORMAT__MIST = "Мистика"
+FORMAT__FOLK = "Частушки"
+
 
 def start(update, context) -> None:
     user_id = get_user_id(update)
@@ -72,6 +77,12 @@ def start(update, context) -> None:
     seed_generator.restart_user_session(user_id)
 
     keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
+                [InlineKeyboardButton(FORMAT__KID, callback_data='format=' + FORMAT__KID)],
+                [InlineKeyboardButton(FORMAT__PHIL, callback_data='format=' + FORMAT__PHIL)],
+                [InlineKeyboardButton(FORMAT__HUM, callback_data='format=' + FORMAT__HUM)],
+                [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format=' + FORMAT__RUBAI)],
+                [InlineKeyboardButton(FORMAT__MIST, callback_data='format=' + FORMAT__MIST)],
+                [InlineKeyboardButton(FORMAT__FOLK, callback_data='format=' + FORMAT__FOLK)],
                 [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
                 [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
                 ]
@@ -79,7 +90,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 27.05.2022).\n" +
+                                  "Я - бот для генерации стихов (версия от 04.06.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
@@ -97,24 +108,19 @@ def format_menu(context, callback_data):
     format = callback_data.match.string.split('=')[1]
 
     if format == FORMAT__COMMON:
-        # Уточняем жанр/тему
-        keyboard = [[InlineKeyboardButton('лирика', callback_data='format=' + 'лирика')],
-                    [InlineKeyboardButton('стихи для детей', callback_data='format=' + 'детский стишок')],
-                    [InlineKeyboardButton('философия', callback_data='format=' + 'философия')],
-                    [InlineKeyboardButton('юмор', callback_data='format=' + 'юмор')],
-                    [InlineKeyboardButton('рубаи', callback_data='format=' + 'рубаи')],
-                    [InlineKeyboardButton('мистика', callback_data='format=' + 'мистика')],
-                    [InlineKeyboardButton('частушки', callback_data='format=' + 'частушка')],
-                    ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        context.callback_query.message.reply_text(text='Уточните жанр', reply_markup=reply_markup, parse_mode='HTML')
-        return
-
-    elif format == 'лирика':
         user_format[user_id] = 'четверостишье'
-    elif format in ('детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
-        user_format[user_id] = format
+    elif format == FORMAT__RUBAI:
+        user_format[user_id] = 'рубаи'
+    elif format == FORMAT__KID:
+        user_format[user_id] = 'детский стишок'
+    elif format == FORMAT__PHIL:
+        user_format[user_id] = 'философия'
+    elif format == FORMAT__HUM:
+        user_format[user_id] = 'юмор'
+    elif format == FORMAT__MIST:
+        user_format[user_id] = 'мистика'
+    elif format == FORMAT__FOLK:
+        user_format[user_id] = 'частушка'
     elif format == FORMAT__1LINER:
         user_format[user_id] = 'одностишье'
     elif format == FORMAT__2LINER:
