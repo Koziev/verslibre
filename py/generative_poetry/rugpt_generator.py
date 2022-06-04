@@ -13,10 +13,11 @@ class RugptGenerator:
         self.tokenizer.add_special_tokens({'bos_token': '<s>', 'eos_token': '</s>', 'pad_token': '<pad>'})
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path)
         self.model.to(self.device)
+        self.model.eval()
 
-    def generate_output(self, context, num_return_sequences=10, temperature=0.9):
-        beam_k = 10
-        beam_p = 0.9
+    def generate_output(self, context, num_return_sequences=10, temperature=1.0):
+        beam_k = 30
+        beam_p = 0.4
         repetition_penalty = 1.0
         prompt_text = "<s>" + context + ' #'
         stop_token = "</s>"
