@@ -287,38 +287,40 @@ class LineStressVariant(object):
         # добавка от 15-12-2021: два подряд ударных слога наказываем сильно!
         if '11' in self.stress_signature_str:
             self.total_score *= 0.1
-            self.penalties.append('@236')
+            self.penalties.append('@290')
 
         # добавка от 16-12-2021: безударное последнее слово наказываем сильно!
-        if self.stressed_words[-1].new_stress_pos == -1:
+        # коррекция от 05.06.2022: так как последним бывает пунктуатор, используем метод для получения рифмуемого слова
+        #if self.stressed_words[-1].new_stress_pos == -1:
+        if self.get_last_rhyming_word().new_stress_pos == -1:
             self.total_score *= 0.1
-            self.penalties.append('@241')
+            self.penalties.append('@297')
 
         # 01-01-2022 ударную частицу "и" в начале строки наказываем сильно
         # 〚И́(0.500) споко́йно детворе́〛(0.500)
         if self.stressed_words[0].new_stress_pos == 1 and self.stressed_words[0].poetry_word.form.lower() == 'и':
             self.total_score *= 0.1
-            self.penalties.append('@247')
+            self.penalties.append('@303')
 
         for word1, word2 in zip(stressed_words, stressed_words[1:]):
             # 28-12-2021 проверяем цепочки согласных в смежных словах
             n_adjacent_consonants = word1.poetry_word.trailing_consonants + word2.poetry_word.leading_consonants
             if n_adjacent_consonants > 5:
                 self.total_score *= 0.5
-                self.penalties.append('@254')
+                self.penalties.append('@309')
 
             # 01-01-2022 Штрафуем за ударный предлог перед существительным:
             # Все по́ дома́м - она и ра́да
             #     ^^^^^^^^
             if word1.poetry_word.upos == 'ADP' and word1.new_stress_pos > 0 and word2.poetry_word.upos in ('NOUN', 'PROPN') and word2.new_stress_pos > 0:
                 self.total_score *= 0.5
-                self.penalties.append('@261')
+                self.penalties.append('@317')
 
         for word1, word2, word3 in zip(stressed_words, stressed_words[1:], stressed_words[2:]):
             # 29-12-2021 Более двух подряд безударных слов - штрафуем
             if word1.new_stress_pos == -1 and word2.new_stress_pos == -1 and word3.new_stress_pos == -1:
                 self.total_score *= 0.1
-                self.penalties.append('@267')
+                self.penalties.append('@323')
 
         # 28-12-2021 штрафуем за подряд идущие короткие слова (1-2 буквы)
         #for word1, word2, word3 in zip(stressed_words, stressed_words[1:], stressed_words[2:]):
@@ -330,12 +332,12 @@ class LineStressVariant(object):
             # 〚Что за недоразуме́нье〛
             # 00000010
             self.total_score *= 0.1
-            self.penalties.append('@279')
+            self.penalties.append('@335')
         else:
             # 01-01-2022 Детектируем разные сбои ритма
             if self.stress_signature_str in aligner.bad_signature1:
                 self.total_score *= 0.1
-                self.penalties.append('@284')
+                self.penalties.append('@340')
 
     def __repr__(self):
         s = '〚' + ' '.join(w.__repr__() for w in self.stressed_words) + '〛'
@@ -895,7 +897,8 @@ class PoetryStressAligner(object):
             r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
 
             if r01 and r13 and not r02:
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
+                #score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
+                score1234, mapped_meter = self._align_line_groups([[plinev[0]], [plinev[1]], [plinev[2]], [plinev[3]]])
 
                 score = score1234 * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
                 if score > best_score:
