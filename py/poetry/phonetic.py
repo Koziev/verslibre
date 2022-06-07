@@ -6,6 +6,7 @@
 для последующей быстрой подгрузки.
 
 19.05.2022 Добавлено автоисправление некоторых орфографических ошибок типа "тишына", "стесняцца"
+07.06.2022 Добавлено автоисправление децкий ==> детский
 """
 
 import json
@@ -41,6 +42,11 @@ class Accents:
         return word.lower() #.replace(u'ё', u'е')
 
     def load(self, data_dir, all_words):
+        # Рифмовник для нечеткой рифмы
+        with open(os.path.join(data_dir, 'rifmovnik.small.json'), 'r') as f:
+            rhyming_data = json.load(f)
+            self.rhyming_dict = dict((key, values) for key, values in rhyming_data['dictionary'].items() if len(values) > 0)
+
         # пары слов, который будем считать рифмующимися
         with io.open(os.path.join(data_dir, 'rhymed_words.txt'), 'r', encoding='utf-8') as rdr:
             for line in rdr:
@@ -199,6 +205,7 @@ class Accents:
             pickle.dump(self.word_accents_dict, f)
             pickle.dump(self.yo_words, f)
             pickle.dump(self.rhymed_words, f)
+            pickle.dump(self.rhyming_dict, f)
 
     def load_pickle(self, path):
         with open(path, 'rb') as f:
@@ -207,6 +214,7 @@ class Accents:
             self.word_accents_dict = pickle.load(f)
             self.yo_words = pickle.load(f)
             self.rhymed_words = pickle.load(f)
+            self.rhyming_dict = pickle.load(f)
 
     def after_loading(self, stress_model_dir):
         self.stemmer = RussianStemmer()
@@ -462,7 +470,13 @@ class Accents:
 
         # 19.05.2022 в порошках и т.п. по законам жанра допускаются намеренные ошибки типа "ошыбка".
         # Попробуем скорректировать такие ошибки.
-        for m2 in (('шы', 'ши'), ('жы', 'жи'), ('цы', 'ци'), ('щю', 'щу'), ('чю', 'чу'), ('цца', 'ться'), ('ща', 'сча'), ('цэ', 'це'), ('жо', 'жё'), ('шо', 'шё'), ('чо', 'чё'), ('́чьк', 'чк'), ('щьк', 'щк')):
+        corrections = [('шы', 'ши'), ('жы', 'жи'), ('цы', 'ци'), ('щю', 'щу'), ('чю', 'чу'), ('цца', 'ться'),
+                       ('ща', 'сча'), ('цэ', 'це'), ('жо', 'жё'), ('шо', 'шё'), ('чо', 'чё'), ('́чьк', 'чк'),
+                       ('щьк', 'щк'),
+                       ('цк', 'тск'),  # 07.06.2022 децкий ==> детский
+                       ]
+
+        for m2 in corrections:
             if m2[0] in word:
                 word2 = word.replace(m2[0], m2[1])
                 if word2 in self.word_accents_dict:
@@ -818,6 +832,45 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
         return are_phonetically_equal(ending1, ending2)
 
     return False
+
+
+def rhymed_fuzzy(accentuator, word1, stress1, word2, stress2):
+    if len(word1) >= 2 and len(word2) >= 2:
+        eword1, keys1 = extract_ekeys(word1, stress1)
+        eword2, keys2 = extract_ekeys(word2, stress2)
+        for key1 in keys1:
+            if key1 in accentuator.rhyming_dict:
+                for key2 in keys2:
+                    if key2 in accentuator.rhyming_dict[key1]:
+                        return 0.50 # ???
+
+    return 0.0
+
+
+
+def extract_ekeys(word, stress):
+    cx = []
+    vcount = 0
+    stressed_c = None
+    for c in word:
+        if c in 'аеёиоуыэюя':
+            vcount += 1
+            if vcount == stress:
+                stressed_c = c.upper()
+                cx.append(stressed_c)
+            else:
+                cx.append(c)
+        else:
+            cx.append(c)
+
+    word1 = ''.join(cx)
+    keys1 = []
+    eword1 = None
+    for elen in range(2, len(word1)):
+        eword1 = word1[-elen:]
+        if eword1[0] == stressed_c or eword1[1] == stressed_c:
+            keys1.append(eword1)
+    return eword1, keys1
 
 
 if __name__ == '__main__':
