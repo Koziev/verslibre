@@ -448,42 +448,68 @@ class PoetryLine(object):
             raise ValueError('Could not parse text: ' + text2)
 
         for parsing in parsings:
-            for ud_token in parsing:
+            # Если слово в строке всего одно, то частеречная разметка не будет нормально работать.
+            # В этом случае мы просто берем все варианты ударения для этого единственного слова.
+            nw = sum(t.upos != 'PUNCT' for t in parsing)
+            if nw == 1:
+                ud_token = parsing[0]
                 word = ud_token.form.lower()
-                stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
                 alt_stress_pos = []
-                if count_vowels(word) > 0 and stress_pos == -1:
-                    # Если слово допускает альтернативные ударения по списку, то берем первое из них (обычно это
-                    # основное, самое частотное ударение), и не бросаем исключение, так как дальше матчер все равно
-                    # будет перебирать все варианты по списку.
-                    if word in accentuator.ambiguous_accents2:
-                        ax = accentuator.ambiguous_accents2[word]
-                        a1 = ax[0]
-                        n_vowels = 0
-                        for c in a1:
-                            if c.lower() in 'уеыаоэёяию':
-                                n_vowels += 1
 
-                            if c in 'АЕЁИОУЫЭЮЯ':
-                                stress_pos = n_vowels
-                                break
-
-                    if stress_pos == -1:
-                        # Мы можем оказаться тут из-за ошибки частеречной разметки. Проверим,
-                        # входит ли слово в список омографов.
-                        if word in accentuator.ambiguous_accents:
-                            # Слово является омографом. Возьмем в работу все варианты ударения.
-                            for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
-                                i = locate_Astress_pos(stressed_form)
-                                alt_stress_pos.append(i)
-                            stress_pos = alt_stress_pos[0]
-
-                        if stress_pos == -1:
-                            msg = 'Could not locate stress position in word "{}"'.format(word)
-                            raise ValueError(msg)
+                if word in accentuator.ambiguous_accents2:
+                    ax = accentuator.ambiguous_accents2[word]
+                    for a1 in ax:
+                        i = locate_Astress_pos(a1)
+                        alt_stress_pos.append(i)
+                    stress_pos = alt_stress_pos[0]
+                elif word in accentuator.ambiguous_accents:
+                    # Слово является омографом. Возьмем в работу все варианты ударения.
+                    for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
+                        i = locate_Astress_pos(stressed_form)
+                        alt_stress_pos.append(i)
+                    stress_pos = alt_stress_pos[0]
+                else:
+                    stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
 
                 pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
                 pline.pwords.append(pword)
+            else:
+                for ud_token in parsing:
+                    word = ud_token.form.lower()
+                    stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
+                    alt_stress_pos = []
+                    if count_vowels(word) > 0 and stress_pos == -1:
+                        # Если слово допускает альтернативные ударения по списку, то берем первое из них (обычно это
+                        # основное, самое частотное ударение), и не бросаем исключение, так как дальше матчер все равно
+                        # будет перебирать все варианты по списку.
+                        if word in accentuator.ambiguous_accents2:
+                            ax = accentuator.ambiguous_accents2[word]
+                            a1 = ax[0]
+                            n_vowels = 0
+                            for c in a1:
+                                if c.lower() in 'уеыаоэёяию':
+                                    n_vowels += 1
+
+                                if c in 'АЕЁИОУЫЭЮЯ':
+                                    stress_pos = n_vowels
+                                    break
+
+                        if stress_pos == -1:
+                            # Мы можем оказаться тут из-за ошибки частеречной разметки. Проверим,
+                            # входит ли слово в список омографов.
+                            if word in accentuator.ambiguous_accents:
+                                # Слово является омографом. Возьмем в работу все варианты ударения.
+                                for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
+                                    i = locate_Astress_pos(stressed_form)
+                                    alt_stress_pos.append(i)
+                                stress_pos = alt_stress_pos[0]
+
+                            if stress_pos == -1:
+                                msg = 'Could not locate stress position in word "{}"'.format(word)
+                                raise ValueError(msg)
+
+                    pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
+                    pline.pwords.append(pword)
 
         pline.locate_rhyming_word()
         return pline
