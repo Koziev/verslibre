@@ -9,6 +9,9 @@
 07-04-2022 Если из-за ошибки частеречной разметки не удалось определить вариант ударения омографа, то будем перебирать все варианты.
 22-04-2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее желательно устранять из обучающего датасета.
 07.06.2022 не штрафуем строку с одним ударным слогом, если строка состоит из единственного слова или сочетания предлог+сущ
+10.06.2022 Если в строке есть только одно слово (без учета пунктуации), то для него берем все известные варианты ударения. Это нужно
+           для корректной разметки депрессяшек/артишоков, так как частеречная разметка на одном слове не работает и не позволяет
+           выбрать корректный вариант ударения.
 """
 
 import collections
@@ -452,27 +455,27 @@ class PoetryLine(object):
             # В этом случае мы просто берем все варианты ударения для этого единственного слова.
             nw = sum(t.upos != 'PUNCT' for t in parsing)
             if nw == 1:
-                ud_token = parsing[0]
-                word = ud_token.form.lower()
-                alt_stress_pos = []
+                for ud_token in parsing:
+                    word = ud_token.form.lower()
+                    alt_stress_pos = []
 
-                if word in accentuator.ambiguous_accents2:
-                    ax = accentuator.ambiguous_accents2[word]
-                    for a1 in ax:
-                        i = locate_Astress_pos(a1)
-                        alt_stress_pos.append(i)
-                    stress_pos = alt_stress_pos[0]
-                elif word in accentuator.ambiguous_accents:
-                    # Слово является омографом. Возьмем в работу все варианты ударения.
-                    for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
-                        i = locate_Astress_pos(stressed_form)
-                        alt_stress_pos.append(i)
-                    stress_pos = alt_stress_pos[0]
-                else:
-                    stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
+                    if word in accentuator.ambiguous_accents2:
+                        ax = accentuator.ambiguous_accents2[word]
+                        for a1 in ax:
+                            i = locate_Astress_pos(a1)
+                            alt_stress_pos.append(i)
+                        stress_pos = alt_stress_pos[0]
+                    elif word in accentuator.ambiguous_accents:
+                        # Слово является омографом. Возьмем в работу все варианты ударения.
+                        for stressed_form, tagsets in accentuator.ambiguous_accents[word].items():
+                            i = locate_Astress_pos(stressed_form)
+                            alt_stress_pos.append(i)
+                        stress_pos = alt_stress_pos[0]
+                    else:
+                        stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
 
-                pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
-                pline.pwords.append(pword)
+                    pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
+                    pline.pwords.append(pword)
             else:
                 for ud_token in parsing:
                     word = ud_token.form.lower()
