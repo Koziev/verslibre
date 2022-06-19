@@ -1040,7 +1040,19 @@ class PoetryStressAligner(object):
                     score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
 
             score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-            if score > best_score:
+
+            is_better = False
+            if best_ivar is None:
+                is_better = True
+            elif best_rhyme_scheme == '----' and rhyme_scheme != '----':
+                is_better = True
+            elif best_rhyme_scheme != '----' and rhyme_scheme == '----':
+                is_better = False
+            elif (best_rhyme_scheme == '----' and rhyme_scheme == '----') or (best_rhyme_scheme != '----' and rhyme_scheme != '----'):
+                if score > best_score:
+                    is_better = True
+
+            if is_better:
                 best_variant = plinev
                 best_score = score
                 best_meter = mapped_meter
@@ -1270,14 +1282,15 @@ if __name__ == '__main__':
     #         ===== ТУТ БУДУТ АВТОТЕСТЫ ===
 
     true_markups = [
-#                    """шу́зы промо́кли бе́сит сля́коть
-#печа́ль боже́ственным клише́
-#я́ гидротеософофо́бка
-#в душе́""",
         """пролета́ет ле́то
         гру́сти не тая́
         и аналоги́чно
         пролета́ю я́""",
+
+        """хардко́р на у́лице сосе́дней
+        вчера́ ната́ша умерла́
+        и никола́ю наконе́ц то́
+        дала́"""
 ]
 
     for true_markup in true_markups:
@@ -1290,7 +1303,7 @@ if __name__ == '__main__':
         #for pline in alignment.poetry_lines:
         #    print(pline.stress_signature_str)
         pred_markup = alignment.get_stressed_lines()
-        if pred_markup != true_markup:
+        if pred_markup != '\n'.join(poem):
             print('Markup test failed')
             print('Expected:\n{}\n\nOutput:\n{}'.format(true_markup, pred_markup))
             exit(0)
