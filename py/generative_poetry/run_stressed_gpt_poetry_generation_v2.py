@@ -242,7 +242,7 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
-            if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
+            if format in 'четверостишье|детский стишок|философия|юмор|мистика'.split('|'):
                 poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
@@ -387,11 +387,13 @@ if __name__ == '__main__':
 8 - рубаи
 9 - мистика
 10 - частушка
+11 - Филатов
+12 - Пушкин
 """
         print(menu)
         format = None
         while not format:
-            s = input('1 ... 10 :> ').strip()
+            s = input('1 ... 11 :> ').strip()
             if s == '1':
                 format = 'одностишье'
             elif s == '2':
@@ -412,6 +414,10 @@ if __name__ == '__main__':
                 format = 'мистика'
             elif s == '10':
                 format = 'частушка'
+            elif s == '11':
+                format = 'Филатов'
+            elif s == '12':
+                format = 'Пушкин'
             else:
                 print('Некорректный вариант!')
 
