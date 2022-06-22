@@ -12,6 +12,7 @@
 10.06.2022 Если в строке есть только одно слово (без учета пунктуации), то для него берем все известные варианты ударения. Это нужно
            для корректной разметки депрессяшек/артишоков, так как частеречная разметка на одном слове не работает и не позволяет
            выбрать корректный вариант ударения.
+22.06.2022 в артишоках для последней строки с одним словом для OOV делаем перебор всех вариантов ударности.
 """
 
 import collections
@@ -472,7 +473,18 @@ class PoetryLine(object):
                             alt_stress_pos.append(i)
                         stress_pos = alt_stress_pos[0]
                     else:
-                        stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
+                        # 22.06.2022 для OOV делаем перебор всех вариантов ударности для одиночного слова в артишоках.
+                        # При этом не используется функционал автокоррекции искажения и опечаток в ударяторе.
+                        if word not in accentuator.word_accents_dict and any((c in word) for c in 'аеёиоуыэюя'):
+                            n_vowels = 0
+                            for c in word:
+                                if c.lower() in 'уеыаоэёяию':
+                                    n_vowels += 1
+                                    alt_stress_pos.append(n_vowels)
+
+                            stress_pos = alt_stress_pos[0]
+                        else:
+                            stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
 
                     pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
                     pline.pwords.append(pword)
@@ -1290,7 +1302,37 @@ if __name__ == '__main__':
         """хардко́р на у́лице сосе́дней
         вчера́ ната́ша умерла́
         и никола́ю наконе́ц то́
-        дала́"""
+        дала́""",
+
+        """он удира́л от нас двора́ми
+        едва успе́в сказа́ть свекла́
+        филфа́к не ви́дывал тако́го
+        ссыкла́""",
+
+        """я проводни́к электрото́ка
+        зажгу́ две́ ла́мпочки в носу́
+        как только но́жницы в розе́тку
+        засу́""",
+
+        """узна́й вы из како́го со́ра
+        поро́ю пи́шутся стихи́
+        свои́ б засу́нули пода́льше
+        имхи́""",
+
+        """аэроста́ты цеппели́ны
+        и гво́здь програ́ммы ле́ бурже́
+        после́дний вы́дох господи́на
+        пэжэ́""",
+
+        """всех тех кого́ хоте́л уво́лить
+        от зло́сти проломи́в насти́л
+        прора́б в полё́те трёхмину́тном
+        прости́л""",
+
+        """оле́г за жи́знью наблюда́ет
+        и ду́мает ещё́ б разо́к
+        пересмотре́ть её́ снача́ла
+        в глазо́к"""
 ]
 
     for true_markup in true_markups:
@@ -1303,9 +1345,11 @@ if __name__ == '__main__':
         #for pline in alignment.poetry_lines:
         #    print(pline.stress_signature_str)
         pred_markup = alignment.get_stressed_lines()
-        if pred_markup != '\n'.join(poem):
+        expected_markup = '\n'.join(poem)
+        if pred_markup != expected_markup:
             print('Markup test failed')
-            print('Expected:\n{}\n\nOutput:\n{}'.format(true_markup, pred_markup))
+            print('Expected:\n{}\n\nOutput:\n{}'.format(expected_markup, pred_markup))
             exit(0)
 
 
+    print('All tests passed OK.')
