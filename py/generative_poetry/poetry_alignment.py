@@ -1172,7 +1172,6 @@ class PoetryStressAligner(object):
 
         return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme='')
 
-
     def detect_repeating(self, alignment):
         # Иногда генеративная модель выдает повторы существтельных типа "любовь и любовь" в одной строке.
         # Такие генерации выглядят криво.
@@ -1209,17 +1208,17 @@ class PoetryStressAligner(object):
         # etc.
         rhyme_pairs = []
         if alignment.rhyme_scheme == 'ABAB':
-            rhyme_pairs.append((alignment.poetry_lines[0].stressed_words[-1], alignment.poetry_lines[2].stressed_words[-1]))
-            rhyme_pairs.append((alignment.poetry_lines[1].stressed_words[-1], alignment.poetry_lines[2].stressed_words[-1]))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[2].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[1].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
         elif alignment.rhyme_scheme == 'ABBA':
-            rhyme_pairs.append((alignment.poetry_lines[0].stressed_words[-1], alignment.poetry_lines[3].stressed_words[-1]))
-            rhyme_pairs.append((alignment.poetry_lines[1].stressed_words[-1], alignment.poetry_lines[2].stressed_words[-1]))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[1].get_last_rhyming_word(), alignment.poetry_lines[2].get_last_rhyming_word()))
         elif alignment.rhyme_scheme == 'AABA':
-            rhyme_pairs.append((alignment.poetry_lines[0].stressed_words[-1], alignment.poetry_lines[1].stressed_words[-1]))
-            rhyme_pairs.append((alignment.poetry_lines[0].stressed_words[-1], alignment.poetry_lines[3].stressed_words[-1]))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[1].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
         elif alignment.rhyme_scheme == 'AABB':
-            rhyme_pairs.append((alignment.poetry_lines[0].stressed_words[-1], alignment.poetry_lines[1].stressed_words[-1]))
-            rhyme_pairs.append((alignment.poetry_lines[2].stressed_words[-1], alignment.poetry_lines[3].stressed_words[-1]))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[1].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[2].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
 
         for word1, word2 in rhyme_pairs:
             if word1.poetry_word.upos == 'VERB' and word2.poetry_word.upos == 'VERB':
@@ -1229,6 +1228,9 @@ class PoetryStressAligner(object):
                 form2 = word2.poetry_word.form.lower()
                 if (form1, form2) in self.accentuator.rhymed_words:
                     continue
+
+                if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л м шь те й ю ь лись лась лось лся тся ться я шись в'.split(' ')):
+                    return True
 
                 if form1.endswith(form2):
                     return True
@@ -1289,6 +1291,17 @@ if __name__ == '__main__':
 
     #alignment = aligner.build_from_markup('Без му́́ки не́т и нау́ки.')
     #print('\n' + alignment.get_stressed_lines() + '\n')
+
+    text = """Во все, что ты верил, не бывши таким,
+Растоптали, сожгли, разорвали,
+Завидуя в чем-то, пожалуй, другим,
+Которым так жизнь не ломали."""
+
+    poem = [z.strip() for z in text.split('\n') if z.strip()]
+    alignment = aligner.align(poem, check_rhymes=False)
+    # print(alignment)
+    print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
+    print('='*80)
 
     # ================================================
     #         ===== ТУТ БУДУТ АВТОТЕСТЫ ===
