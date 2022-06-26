@@ -790,6 +790,7 @@ class PoetryStressAligner(object):
                         raise RuntimeError()
 
                     pattern_lines = []
+        self.allow_fuzzy_rhyming = True
 
     def map_meter(self, signature, lines):
         scores = [line.map_meter(signature) for line in lines]
@@ -805,7 +806,7 @@ class PoetryStressAligner(object):
                 best_meter = name
         return best_meter, best_score
 
-    def get_spectrum(sline1):
+    def get_spectrum(pline):
         spectrum = set()
         unstressed_seq_len = 0
         for sign in pline.stress_signature:
@@ -815,7 +816,6 @@ class PoetryStressAligner(object):
             else:
                 unstressed_seq_len += 1
         return spectrum
-
 
     def map_2signatures(self, sline1, sline2):
         # ВАРИАНТ 1
@@ -869,27 +869,18 @@ class PoetryStressAligner(object):
         if (f1, f2) in self.accentuator.rhymed_words or (f2, f1) in self.accentuator.rhymed_words:
             return True
 
-        return rhymed2(self.accentuator,
-                       poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
-                       poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
-
-    def check_fuzzy_rhyming(self, poetry_word1, poetry_word2):
-        f1 = poetry_word1.stressed_form
-        f2 = poetry_word2.stressed_form
-        if (f1, f2) in self.accentuator.rhymed_words or (f2, f1) in self.accentuator.rhymed_words:
+        r = rhymed2(self.accentuator,
+                    poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
+                    poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
+        if r:
             return True
 
-        if rhymed2(self.accentuator,
-                   poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
-                   poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags
-                  ):
-            return 1.0
+        if self.allow_fuzzy_rhyming:
+            return rhymed_fuzzy(self.accentuator,
+                                poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
+                                poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
 
-        fres = rhymed_fuzzy(self.accentuator,
-                            poetry_word1.poetry_word.form, poetry_word1.new_stress_pos,
-                            poetry_word2.poetry_word.form, poetry_word2.new_stress_pos)
-        return fres
-
+        return False
 
     def _align_line_group(self, metre_signature, lines):
         line1 = lines[0]
@@ -1229,7 +1220,7 @@ class PoetryStressAligner(object):
                 if (form1, form2) in self.accentuator.rhymed_words:
                     continue
 
-                if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л м шь те й ю ь лись лась лось лся тся ться я шись в'.split(' ')):
+                if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л м шь т тся у те й ю ь лись лась лось лся тся ться я шись в'.split(' ')):
                     return True
 
                 if form1.endswith(form2):
