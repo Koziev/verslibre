@@ -44,7 +44,7 @@ class Accents:
 
     def load(self, data_dir, all_words):
         # Рифмовник для нечеткой рифмы
-        with open(os.path.join(data_dir, 'rifmovnik.small.json'), 'r') as f:
+        with open(os.path.join(data_dir, 'rifmovnik.small.upgraded.json'), 'r') as f:
             rhyming_data = json.load(f)
             self.rhyming_dict = dict((key, values) for key, values in rhyming_data['dictionary'].items() if len(values) > 0)
 
@@ -852,6 +852,28 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
 
 
 fuzzy_ending_pairs = [
+    (r'\^([:A:][:C:]+)а', r'\^([:A:][:C:]+)э'),  # риска - миске
+
+    (r'\^ыны', r'\^ына'),  # цепеллины - господина
+
+    (r'\^([:A:][:C:][:A:][:C:])а', r'\^([:A:][:C:][:A:][:C:])ам'), # яруса - парусом
+
+    (r'\^ысил', r'\^ысыл'),  # чисел - возвысил
+
+    (r'\^([:A:][:C:]{2,})э', r'\^([:A:][:C:]{2,})ай'),  # миске - пропиской
+
+    (r'\^([:A:][щч])ие', r'\^([:A:][щч])ые'),  # щемящее - парящие
+
+    (r'([:C:])\^ою', r'([:C:])\^ое'),  # щекою - такое
+
+    (r'\^([:A:][:C:])ай', r'\^([:A:][:C:])а'),  # прохладой - надо
+
+    (r'\^([:A:][жш])[эау]', r'\^([:A:][жш])[эау]'),  # коже - тревожа
+
+    (r'\^([:A:]ш)ин', r'\^([:A:]ш)ан'),  #  вишен - услышан
+
+    (r'\^([:A:][:C:]+ь)э', r'\^([:A:][:C:]+ь)а'),  # спасенье - вознесенья
+
     (r'\^([:A:][:C:]+)[ыэ]', r'\^([:A:][:C:]+)[ыэ]'),  # медведи - велосипеде
 
     (r'\^([:A:][:C:]+)[оуа]', r'\^([:A:][:C:]+)[оау]м'),  # Андрюшка - хрюшкам
@@ -868,7 +890,7 @@ fuzzy_ending_pairs = [
                       ]
 
 def check_ending_rx_matching_2(word1, word2, s1, s2):
-    for x, y in [(':C:', 'бвгджзклмнпрстфхцчшщт'), (':A:', 'аоеёиуюэюя')]:
+    for x, y in [(':C:', 'бвгджзклмнпрстфхцчшщт'), (':A:', 'аоеёиуыюэюя')]:
         s1 = s1.replace(x, y)
         s2 = s2.replace(x, y)
 
@@ -887,11 +909,13 @@ def check_ending_rx_matching_2(word1, word2, s1, s2):
 def render_xword(accentuator, word, stress_pos, ud_tags):
     phonems = []
 
+    VOWELS = 'уеыаоэёяию'
+
     # Упрощенный алгоритм фонетической транскрипции - не учитываем йотирование, для гласных июяеё не помечаем
     # смягчение предшествующих согласных, etc.
     v_counter = 0
     for i, c in enumerate(word.lower()):
-        if c in "уеыаоэёяию":
+        if c in VOWELS:
             v_counter += 1
             if v_counter == stress_pos:
                 # Достигли ударения
@@ -929,50 +953,141 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
                     # безударная "о" превращается в "а"
                     c = 'а'
                 elif c == 'е':
-                    c = 'э'
+                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                        # первую в слове, и после гласной, 'е' оставляем (должно быть что-то типа je)
+                        pass
+                    else:
+                        # металле ==> митал'э
+                        if i == len(word)-1:
+                            c = 'э'
+                        else:
+                            c = 'и'
                 elif c == 'я':
-                    c = 'а'
+                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                        pass
+                    else:
+                        c = 'а'
                 elif c == 'ё':
-                    c = 'о'
+                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                        pass
+                    else:
+                        c = 'о'
                 elif c == 'ю':
-                    c = 'у'
+                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                        pass
+                    else:
+                        c = 'у'
                 elif c == 'и':
-                    # меняем ЦИ -> ЦЫ
-                    #if c2 in 'цшщ' and ending[0] == 'и':
-                    c = 'ы'
+                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                        pass
+                    else:
+                        # меняем ЦИ -> ЦЫ
+                        #if c2 in 'цшщ' and ending[0] == 'и':
+                        c = 'ы'
 
                 phonems.append(c)
         else:
             # строго говоря, согласные надо бы смягчать в зависимости от следующей буквы (еёиюяь).
+            # но нам для разметки стихов это не нужно.
 
-            # if c == 'ж':
-            #     # превращается в "ш", если дальше идет глухая согласная
-            #     if i < len(word)-1 and word[i+1] in 'пфктс':
-            #         c = 'ш'
-            #
-            # if u == len(word)-1:
-            #     if c == 'д':  # последняя "д" оглушается до "т":  ВЗГЛЯД
-            #         c = 'т'
-            #     elif c == 'ж':  # оглушаем последнюю "ж": ЁЖ
-            #         c = 'ш'
-            #     elif c == 'з':  # оглушаем последнюю "з": МОРОЗ
-            #         c = 'с'
-            #     #elif ending.endswith('г'):  # оглушаем последнюю "г": БОГ
-            #     #    ending = ending[:-1] + 'х'
-            #     elif c == 'б':  # оглушаем последнюю "б": ГРОБ
-            #         c = 'п'
-            #     elif c == 'в':  # оглушаем последнюю "в": КРОВ
-            #         c = 'ф'
+            if c == 'ж':
+                # превращается в "ш", если дальше идет глухая согласная
+                # прожка ==> прошка
+                if i < len(word)-1 and word[i+1] in 'пфктс':
+                    c = 'ш'
+
+            if i == len(word)-1:
+                if c == 'д':  # последняя "д" оглушается до "т":  ВЗГЛЯД
+                    c = 'т'
+                elif c == 'ж':  # оглушаем последнюю "ж": ЁЖ
+                    c = 'ш'
+                elif c == 'з':  # оглушаем последнюю "з": МОРОЗ
+                    c = 'с'
+                elif c == 'г':  # оглушаем последнюю "г": БОГ
+                    c = 'х'
+                elif c == 'б':  # оглушаем последнюю "б": ГРОБ
+                    c = 'п'
+                elif c == 'в':  # оглушаем последнюю "в": КРОВ
+                    c = 'ф'
 
             phonems.append(c)
 
-    #if phonems[-1] == 'ь':  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ"
-    #    phonems = phonems[:-1]
+    if len(phonems) > 2 and phonems[-1] == 'ь' and phonems[-2] in 'шч':  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ", РОЖЬ, МЫШЬ
+        phonems = phonems[:-1]
 
     xword = ''.join(phonems)
-    xword = accentuator.pronounce(xword)
+    #xword = accentuator.pronounce(xword)
 
-    return xword
+    # СОЛНЦЕ -> СОНЦЕ
+    xword = xword.replace('лнц', 'нц')
+
+    # СЧАСТЬЕ -> ЩАСТЬЕ
+    xword = xword.replace('сч', 'щ')
+
+    # БРАТЬСЯ -> БРАЦА
+    xword = xword.replace('ться', 'ца')
+
+    # БОЯТСЯ -> БОЯЦА
+    xword = xword.replace('тся', 'ца')
+
+    # БРАТЦЫ -> БРАЦЫ
+    xword = xword.replace('тц', 'ц')
+
+    #
+    #         # ЖИР -> ЖЫР
+    #         s = s.replace('жи', 'жы')
+    #
+    #         # ШИП -> ШЫП
+    #         s = s.replace('ши', 'шы')
+    #
+    #         # МОЦИОН -> МОЦЫОН
+    #         s = s.replace('ци', 'цы')
+    #
+    #         # ЖЁСТКО -> ЖОСТКО
+    #         s = s.replace('жё', 'жо')
+    #
+    #         # ОКОНЦЕ -> ОКОНЦЭ
+    #         s = s.replace('це', 'цэ')
+    #
+
+    # двойные согласные:
+    # СУББОТА -> СУБОТА
+    xword = re.sub(r'([бвгджзклмнпрстфхцчшщ])\1', r'\1', xword)
+
+    # оглушение:
+    # СКОБКУ -> СКОПКУ
+    new_s = []
+    for c1, c2 in zip(xword, xword[1:]):
+        if c2 in 'кпстфх':
+            new_s.append(accentuator.conson(c1))
+        else:
+            new_s.append(c1)
+    xword = ''.join(new_s) + xword[-1]
+
+    #
+    #         # последнюю согласную оглушаем всегда:
+    #         # ГОД -> ГОТ
+    #         new_s.append(self.conson(s[-1]))
+    #
+    #         s = ''.join(new_s)
+
+
+    # огрушаем последнюю согласную с мягким знаком:
+    # ВПРЕДЬ -> ВПРЕТЬ
+    if len(xword) >= 2 and xword[-1] == 'ь' and xword[-2] in 'бвгдз':
+        xword = xword[:-2] + accentuator.conson(xword[-2]) + 'ь'
+
+    if '^' in xword:
+        apos = xword.index('^')
+        if apos == len(xword) - 2:
+            # ударная гласная - последняя, в этом случае включаем предшествующую букву.
+            clausula = xword[apos-1:]
+        else:
+            clausula = xword[apos:]
+    else:
+        clausula = xword
+
+    return xword, clausula
 
 
 def rhymed_fuzzy(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
@@ -982,10 +1097,13 @@ def rhymed_fuzzy(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2
     if stress2 is None:
         stress2 = accentuator.get_accent(word2, ud_tags2)
 
-    xword1 = render_xword(accentuator, word1, stress1, ud_tags1)
-    xword2 = render_xword(accentuator, word2, stress2, ud_tags2)
-    if xword1 == xword2:
+    xword1, clausula1 = render_xword(accentuator, word1, stress1, ud_tags1)
+    xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2)
+
+    if len(clausula1) >= 3 and clausula1 == clausula2:
+        # поэтом - ответом
         return True
+
 
     for s1, s2 in fuzzy_ending_pairs:
         if check_ending_rx_matching_2(xword1, xword2, s1, s2):
@@ -1225,7 +1343,68 @@ if __name__ == '__main__':
     r = rhymed(accents, 'гроб', [], 'поп', [])
     assert(r is True)
 
+    # =======================================
+    # TODO - переделать на цикл по списку пар.
 
+    r = rhymed_fuzzy(accents, 'спастись', None, [], 'ввысь', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'риска', None, [], 'миске', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'колыбели', None, [], 'еле', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'славой', None, [], 'право', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'цепеллины', None, [], 'господина', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'яруса', None, [], 'парусом', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'чисел', None, [], 'возвысил', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'поэтом', None, [], 'ответом', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'миске', None, [], 'пропиской', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'чумазый', None, [], 'заразы', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'щемящее', None, [], 'парящие', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'щекою', None, [], 'такое', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'главном', None, [], 'плавно', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'прохладой', None, [], 'надо', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'вишен', None, [], 'услышан', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'коже', None, [], 'тревожа', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'сигаретку', None, [], 'редко', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'блюде', None, [], 'люди', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'рубашки', None, [], 'отмашке', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'спасенье', None, [], 'вознесенья', None, [])
+    assert(r is True)
 
     r = rhymed_fuzzy(accents, 'свиней', None, [], 'войне', None, [])
     assert(r is True)
@@ -1256,6 +1435,8 @@ if __name__ == '__main__':
 
     r = rhymed_fuzzy(accents, 'медведи', None, [], 'велосипеде', None, [])
     assert(r is True)
+
+    # =====================================
 
     r = rhymed(accents, 'льна', [], 'война', [])
     assert(r is True)
