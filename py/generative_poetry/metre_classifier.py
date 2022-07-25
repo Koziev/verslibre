@@ -271,6 +271,9 @@ def get_syllables(word: str) -> List[Syllable]:
 
     # В случае наличия дефиса разбиваем слова на подслова, находим слоги в них, объединяем.
     if "-" in word:
+        if word == "-":
+            return [Syllable(0, 1, 0, word)]
+
         word_parts = word.split("-")
         word_syllables = []
         last_part_end = 0
@@ -313,6 +316,12 @@ def get_syllables(word: str) -> List[Syllable]:
         # Добиваем последний слог до конца слова.
         syllables[-1] = Syllable(syllables[-1].begin, len(word), syllables[-1].number,
                                  word[syllables[-1].begin:len(word)])
+
+    # 05.04.2022
+    # обработка случая однобуквенных слов (предлоги, частицы) из согласной, которые дают 0 слогов.
+    if len(syllables) == 0:
+        syllables.append(Syllable(begin=0, end=1, number=0, text=word))
+
     return syllables
 
 
@@ -1175,7 +1184,7 @@ class MetreClassifierAdapter:
 
     def predict(self, text):
         markup = Markup.process_text(text, self.stress_predictor)
-        m = MetreClassifier.classify_metre(markup).metre
+        m = MetreClassifier.classify_metre(markup)
         return m
 
 
@@ -1187,14 +1196,11 @@ if __name__ == '__main__':
 
     mclassifier = MetreClassifierAdapter(accentuator)
 
-    text = 'белая берёза\nпод моим окном\nпринакрылась снегом\nсловно серебром'
-    #text = 'маленький мальчик нашел пулемет\nбольше в деревне никто не живет'
-    #text = 'кто шагает дружно в ряд?\nпионерский отряд наш'
-    #text = 'Весна в разгаре – пробужденье,\nЗима в зените, день в тепле,\nВ природе утренней варенье,\nКорейка в потускневшей мгле.'
-    #text = 'Весна в разгаре – пробужденье,\nИшак в зените, день в тепле,\nВ природе утреннем варенье,\nВечер в вечерней мгле.'
-    #text = 'Шумела роща золотая,\nей море вторило вдали,\nи всхлипывали, пролетая,\nкочующие журавли'
-    #text = 'Оставьте Сталина в покое!\nПрошу об этом, вашу мать!\nА то придумали такое,\nЧто даже в сказе не сказать!'
-    for line in text.split('\n'):
-        m = mclassifier.predict(line)
-        print('{} ==> {}'.format(line, m))
+    text = """Но есть только ты, полноводное чудо
+Что не встречало меня на пути
+И не дошло до меня, из ниоткуда
+Туда, где твоё отражение найти"""
+
+    m = mclassifier.predict(text)
+    print(m)
 

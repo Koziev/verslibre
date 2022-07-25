@@ -444,7 +444,10 @@ class PoetryLine(object):
         pline.pwords = []
 
         text2 = text
-        for c in '.,?!:;…-–—«»”“„‘’`"':
+
+        # Отбиваем некоторые симполы пунктуации пробелами, чтобы они гарантировано не слиплись со словом
+        # токенизаторе UDPipe/Stanza.
+        for c in '\'.‚,?!:;…-–—«»”“„‘’`ʹ"˝[]·‹›<>*/=()+®©‛¨×№':
             text2 = text2.replace(c, ' ' + c + ' ').replace('  ', ' ')
 
         parsings = udpipe_parser.parse_text(text2)
@@ -1035,6 +1038,9 @@ class PoetryStressAligner(object):
             elif rhyme_scheme == '-A-A':
                 score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
                 rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
+            elif rhyme_scheme == 'AAAA':
+                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
+                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
             else:
                 if check_rhymes:
                     continue
@@ -1302,6 +1308,11 @@ if __name__ == '__main__':
 Предвкуша́я, пря́мо та́ю
 Как ребё́нок ма́ме, ра́д""", "ABAB"),
 
+        ("""Их куку́шка на крюку́
+Ме́рит вре́мя старику́
+По часо́чку, по деньку́
+Ме́лет го́дики в муку́""", "AAAA"),
+
         ("""Чем се́кс с тобо́й, уж лу́чше телеви́зор
 Иль на худо́й коне́ц нажра́ться антифри́за.""", "AA"),
 
@@ -1505,6 +1516,11 @@ if __name__ == '__main__':
         и ду́мает ещё́ б разо́к
         пересмотре́ть её́ снача́ла
         в глазо́к""", "-A-A"),
+
+        #("""мы вме́сте с тобо́й занима́лись цигу́н
+        # и вме́сте ходи́ли на йо́гу
+        # но ты́ вдруг сказа́ла мне вместо сёгу́н
+        # сё́гун""", "ABAB"),
 ]
 
 
