@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 Фонетический словарь (ударятор).
 При выполнении словарь будет загружен из текстовых файлов, подготовлен и сохранен в pickle-файле
@@ -7,6 +5,7 @@
 
 19.05.2022 Добавлено автоисправление некоторых орфографических ошибок типа "тишына", "стесняцца"
 07.06.2022 Добавлено автоисправление децкий ==> детский
+02.08.2022 Исправление опечатки - твердый знак вместо мягкого "пъянки"
 """
 
 import json
@@ -507,6 +506,12 @@ class Accents:
             # знаки препинания и т.д., в которых нет ни одной гласной.
             return -1
 
+        # 02.08.2022 Исправление опечатки - твердый знак вместо мягкого "пъянки"
+        if 'ъ' in word:
+            word1 = word.replace('ъ', 'ь')
+            if word1 in self.word_accents_dict:
+                return self.word_accents_dict[word1]
+
         if True:
             return self.predict_stress(word)
 
@@ -612,6 +617,20 @@ def are_rhymed_syllables(syllab1, syllab2):
 def extract_ending_vc(s):
     # вернет последние буквы слова, среди которых минимум 1 гласная и 1 согласная
 
+    # мягкий знак и после него йотированная гласная:
+    #
+    # семья
+    #    ^^
+    if re.search(r'ь[ёеюя]$', s):
+        return s[-1]
+
+    # гласная и следом - йотированная гласная:
+    #
+    # моя
+    #  ^^
+    if re.search(r'[аеёиоуыэюя][ёеюя]$', s):
+        return s[-1]
+
     # неглиже
     #      ^^
     r = re.search('([жшщ])е$', s)
@@ -624,14 +643,14 @@ def extract_ending_vc(s):
     if r:
         return r.group(1) + 'ы'
 
-    # иногда встречается в пирожках неорфрграфичная форма:
+    # иногда встречается в пирожках неорфографичная форма:
     # щя
     # ^^
     r = re.search('([жшщ])я$', s)
     if r:
         return r.group(1) + 'а'
 
-    # иногда встречается в пирожках неорфрграфичная форма:
+    # иногда встречается в пирожках неорфографичная форма:
     # трепещю
     #      ^^
     r = re.search('([жшщ])ю$', s)
@@ -716,6 +735,9 @@ def are_phonetically_equal(s1, s2):
 
 
 def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
+    if len(word) == 1:
+        return word
+
     ending = None
     v_counter = 0
     for i, c in enumerate(word.lower()): # 25.06.2022 приводим к нижнему регистру
@@ -807,6 +829,10 @@ def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
     # смещение ударной гласной от конца слова должно быть одно и то же
     # для проверяемых слов.
     if pos1 == pos2:
+        # 28.06.2022 особо рассматриваем случай рифмовки с местоимением "я": друзья-я
+        if word2 == 'я':
+            return word1.endswith('я')
+
         # Теперь все буквы, начиная с ударной гласной
         ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1)
         ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2)
@@ -837,7 +863,7 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
         # гру́сти не тая́
         # и аналоги́чно
         # пролета́ю я́
-        if word2 == 'я' and len(word1) > 1 and word1[-2] in 'аеёиоуэюя':
+        if word2 == 'я' and len(word1) > 1 and word1[-2] in 'аеёиоуэюяь' and word1[-1] == 'я':
             return True
 
         # Получаем клаузулы - все буквы, начиная с ударной гласной
@@ -852,6 +878,28 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
 
 
 fuzzy_ending_pairs = [
+    (r'\^ызар', r'\^ыза'),  # телевизор - антифриза
+
+    (r'\^анай', r'\^аный'),  # манной - странный
+
+    (r'\^очна', r'\^очный'),  # нарочно - молочный
+
+    (r'\^юц[эа]', r'\^удц[аэ]'),  # льются - блюдце
+
+    (r'[:C:]\^ое', r'[:C:]\^оя'),  # простое - покоя
+
+    (r'\^ает', r'\^ают'),  # чает - повенчают
+
+    (r'\^ывый', r'\^ыва'),  # белогривый - некрасиво
+
+    (r'\^энья', r'\^энье'),  # настроенья - упоенье
+
+    (r'\^айна', r'\^айнай'),  # неслучайно - тайной
+
+    (r'\^овым', r'\^овам'),  # еловым - основам
+
+    (r'\^авай', r'\^ава'),  #  славой - права
+
     (r'\^([:A:][:C:]+)а', r'\^([:A:][:C:]+)э'),  # риска - миске
 
     (r'\^ыны', r'\^ына'),  # цепеллины - господина
@@ -953,7 +1001,7 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
                     # безударная "о" превращается в "а"
                     c = 'а'
                 elif c == 'е':
-                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                    if len(phonems) == 0 or phonems[-1] in VOWELS+'ь':
                         # первую в слове, и после гласной, 'е' оставляем (должно быть что-то типа je)
                         pass
                     else:
@@ -963,7 +1011,7 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
                         else:
                             c = 'и'
                 elif c == 'я':
-                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                    if len(phonems) == 0 or phonems[-1] in VOWELS+'ь':
                         pass
                     else:
                         c = 'а'
@@ -973,12 +1021,12 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
                     else:
                         c = 'о'
                 elif c == 'ю':
-                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                    if len(phonems) == 0 or phonems[-1] in VOWELS+'ь':
                         pass
                     else:
                         c = 'у'
                 elif c == 'и':
-                    if len(phonems) == 0 or phonems[-1] in VOWELS:
+                    if len(phonems) == 0 or phonems[-1] in VOWELS+'ь':
                         pass
                     else:
                         # меняем ЦИ -> ЦЫ
@@ -1101,9 +1149,9 @@ def rhymed_fuzzy(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2
     xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2)
 
     if len(clausula1) >= 3 and clausula1 == clausula2:
+        # клаузуллы достаточно длинные и совпадают:
         # поэтом - ответом
         return True
-
 
     for s1, s2 in fuzzy_ending_pairs:
         if check_ending_rx_matching_2(xword1, xword2, s1, s2):
@@ -1309,7 +1357,7 @@ if __name__ == '__main__':
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
 
     # проверяем детектирование ударения для слов, в которых это не требует морфологических тегов.
-    for word in 'птИцэй жОлтый шОпот тишынА сжыгАю соцыАльная магнитозавИсимыми электрощЁточную шестиузловОй двадцатисторОнними двухпротОнными восьмимЕрного пятиствОрчатый тЁрок алЁна самовЫгул нанореснИчками трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split():
+    for word in 'пъЯнки птИцэй жОлтый шОпот тишынА сжыгАю соцыАльная магнитозавИсимыми электрощЁточную шестиузловОй двадцатисторОнними двухпротОнными восьмимЕрного пятиствОрчатый тЁрок алЁна самовЫгул нанореснИчками трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split():
         n_vowels = 0
         true_stress = -1
         for c in word:
@@ -1327,10 +1375,8 @@ if __name__ == '__main__':
     i = accents.get_accent('груди', ['Case=Loc'])
     assert(i == 2)
 
-    # ======================================================================================
-    # Проверяем процедуру проверки рифмованности двух слов с учетом морфологических тегов
-    # ======================================================================================
 
+    # Поверка точной рифмовки слов без неоднозначностей
     r = rhymed(accents, 'говорят', [], 'взгляд', [])
     assert(r is True)
 
@@ -1343,8 +1389,221 @@ if __name__ == '__main__':
     r = rhymed(accents, 'гроб', [], 'поп', [])
     assert(r is True)
 
+    r = rhymed(accents, 'семью', [], 'пью', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'друзья', [], 'я', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'льна', [], 'война', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'холодце', [], 'отце', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'клён', [], 'омон', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'чётки', [], 'обмотки', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'ложка', [], 'плошка', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'щётка', [], 'обмотка', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'парашют', [], 'шут', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'фоссы', [], 'осы', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'Серёжа', [], 'ложа', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'Люся', [], 'муся', [])
+    assert(r is True)
+
+
+    r = rhymed(accents, 'Европа', [], 'поклёпа', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'берёзу', [], 'прозу', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'отеля', [], 'дала', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'бороду', [], 'сторону', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'землей', [], 'коней', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'сильно', [], 'обильна', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'впредь', [], 'корпеть', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'является', [], 'остается', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'браться', [], 'братца', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'сказки', [], 'хаски', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'загса', [], 'бакса', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'догадка', [], 'ватка', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'тогда', [], 'губа', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'на', [], 'губа', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'лозанья', [], 'баранья', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'аттракцион', [], 'моцион', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'эпидемиями', [], 'котлеточками', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'деточки', [], 'конфеточки', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'кровь', [], 'морковь', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'катька', [], 'лопатка', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'побеседуем', [], 'дуем', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'кури', [], 'куры', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'коров', [], 'кров', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'впереди', [], 'детсады', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'кляп', [], 'пап', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'кляп', [], 'ляпа', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'смелее', [], 'большое', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'смелее', [], 'сильнее', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'сильная', [], 'синильная', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'умильная', [], 'сдельная', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'груза', [], 'союза', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'снежной', [], 'нежный', [])
+    assert(r is True)
+
+    # ======================================================================================
+    # Проверяем процедуру проверки рифмованности двух слов с учетом морфологических тегов
+    # ======================================================================================
+
+    r = rhymed(accents, 'я', [], 'ружья', ['Case=Gen'])
+    assert(r is True)
+
+    r = rhymed(accents, 'семью', [], 'мою', ['ADJ'])
+    assert(r is True)
+
+    r = rhymed(accents, 'ружья', ['Case=Gen'], 'твоя', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'любой', 'ADJ|Case=Gen'.split('|'), 'русской', 'ADJ|Case=Gen'.split('|'))
+    assert(r is False)
+
+    r = rhymed(accents, 'века', ['Case=Gen'], 'аптека', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'века', ['Case=Nom'], 'аптека', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'коровы', [], 'совы', ['Case=Nom'])
+    assert(r is True)
+
+    r = rhymed(accents, 'зеркала', 'NOUN|Case=Nom'.split('|'), 'начала', 'VERB|Gender=Fem'.split('|'))
+    assert(r is True)
+
+    r = rhymed(accents, 'салфетка', 'NOUN|Case=Nom'.split('|'), 'клетка', 'NOUN|Case=Nom'.split('|'))
+    assert(r is True)
+
+    r = rhymed(accents, 'горе', 'NOUN|Case=Dat'.split('|'), 'январе', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'горе', 'NOUN|Case=Nom'.split('|'), 'январе', [])
+    assert(r is False)
+
+    r = rhymed(accents, 'боров', 'Case=Nom'.split('|'), 'кров', [])
+    assert(r is False)
+
     # =======================================
+    # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
+
+    r = rhymed_fuzzy(accents, 'телевизор', None, [], 'антифриза', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'манной', None, [], 'странный', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'нарочно', None, [], 'молочный', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'льются', None, [], 'блюдце', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'простое', None, [], 'покоя', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'спасенье', None, [], 'вознесенья', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'чает', None, [], 'повенчают', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'белогривый', None, [], 'некрасиво', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'благо', None, [], 'шагом', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'настроенья', None, [], 'упоенье', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'неслучайно', None, [], 'тайной', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'еловым', None, [], 'основам', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'славой', None, [], 'право', None, [])
+    assert(r is True)
 
     r = rhymed_fuzzy(accents, 'спастись', None, [], 'ввысь', None, [])
     assert(r is True)
@@ -1403,9 +1662,6 @@ if __name__ == '__main__':
     r = rhymed_fuzzy(accents, 'рубашки', None, [], 'отмашке', None, [])
     assert(r is True)
 
-    r = rhymed_fuzzy(accents, 'спасенье', None, [], 'вознесенья', None, [])
-    assert(r is True)
-
     r = rhymed_fuzzy(accents, 'свиней', None, [], 'войне', None, [])
     assert(r is True)
 
@@ -1437,160 +1693,6 @@ if __name__ == '__main__':
     assert(r is True)
 
     # =====================================
-
-    r = rhymed(accents, 'льна', [], 'война', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'холодце', [], 'отце', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'клён', [], 'омон', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'чётки', [], 'обмотки', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'ложка', [], 'плошка', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'щётка', [], 'обмотка', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'парашют', [], 'шут', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'фоссы', [], 'осы', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'Серёжа', [], 'ложа', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'Люся', [], 'муся', [])
-    assert(r is True)
-
-
-    r = rhymed(accents, 'Европа', [], 'поклёпа', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'берёзу', [], 'прозу', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'отеля', [], 'дала', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'бороду', [], 'сторону', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'землей', [], 'коней', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'сильно', [], 'обильна', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'впредь', [], 'корпеть', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'является', [], 'остается', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'любой', 'ADJ|Case=Gen', 'русской', 'ADJ|Case=Gen')
-    assert(r is False)
-
-    r = rhymed(accents, 'браться', [], 'братца', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'сказки', [], 'хаски', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'загса', [], 'бакса', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'догадка', [], 'ватка', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'тогда', [], 'губа', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'на', [], 'губа', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'лозанья', [], 'баранья', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'аттракцион', [], 'моцион', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'эпидемиями', [], 'котлеточками', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'деточки', [], 'конфеточки', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'кровь', [], 'морковь', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'катька', [], 'лопатка', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'века', 'Case=Gen'.split('|'), 'аптека', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'века', 'Case=Nom'.split('|'), 'аптека', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'коровы', [], 'совы', 'Case=Nom'.split('|'))
-    assert(r is True)
-
-    r = rhymed(accents, 'побеседуем', [], 'дуем', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'кури', [], 'куры', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'зеркала', 'NOUN|Case=Nom'.split('|'), 'начала', 'VERB|Gender=Fem'.split('|'))
-    assert(r is True)
-
-    r = rhymed(accents, 'салфетка', 'NOUN|Case=Nom'.split('|'), 'клетка', 'NOUN|Case=Nom'.split('|'))
-    assert(r is True)
-
-    r = rhymed(accents, 'горе', 'NOUN|Case=Dat'.split('|'), 'январе', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'горе', 'NOUN|Case=Nom'.split('|'), 'январе', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'боров', 'Case=Nom'.split('|'), 'кров', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'коров', [], 'кров', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'впереди', [], 'детсады', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'кляп', [], 'пап', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'кляп', [], 'ляпа', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'смелее', [], 'большое', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'смелее', [], 'сильнее', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'сильная', [], 'синильная', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'умильная', [], 'сдельная', [])
-    assert(r is False)
-
-    r = rhymed(accents, 'груза', [], 'союза', [])
-    assert(r is True)
-
-    r = rhymed(accents, 'снежной', [], 'нежный', [])
-    assert(r is True)
 
     # Проверяем вспомогательную процедуру определения ударения для случаев, когда
     # нужно учитывать морфологические признаки слова, чтобы снять неоднозначность.
