@@ -71,7 +71,28 @@ class Accents:
         path = os.path.join(data_dir, 'ambiguous_accents.yaml')
         logging.info('Loading ambiguous accents information from "%s"', path)
         d = yaml.safe_load(io.open(path, 'r', encoding='utf-8').read())
-        self.ambiguous_accents = d
+
+        # 03.08.2022
+        # В словаре встречаются вхождения "Case=Every"
+        # Раскроем, чтобы было явное перечисление всех падежей.
+        d2 = dict()
+        for entry_name, entry_data in d.items():
+            entry_data2 = dict()
+            for form, tagsets in entry_data.items():
+                tagsets2 = []
+                for tagset in tagsets:
+                    if 'Case=Every' in tagset:
+                        for case in ['Nom', 'Gen', 'Ins', 'Acc', 'Dat', 'Loc']:
+                            tagset2 = tagset.replace('Case=Every', 'Case={}'.format(case))
+                            tagsets2.append(tagset2)
+                    else:
+                        tagsets2.append(tagset)
+
+                entry_data2[form] = tagsets2
+
+            d2[entry_name] = entry_data2
+
+        self.ambiguous_accents = d2
 
         # 14.02.2022 сделаем проверку содержимого, чтобы не словить ошибку в рантайме.
         for word, wdata in self.ambiguous_accents.items():
@@ -878,6 +899,16 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
 
 
 fuzzy_ending_pairs = [
+    (r'\^ыськы', r'\^ыскы'),  # с^иськи - в^иски
+
+    (r'\^альцэ', r'\^альца'),  # еб^альце - п^альца
+
+    (r'\^озин', r'\^озэ'),  # вирту^озен - п^озе
+
+    (r'\^убым', r'\^убам'),  # грубым - ледорубом
+
+    (r'\^ыскра', r'\^ыстра'),  # и́скра - кани́стра
+
     (r'\^ызар', r'\^ыза'),  # телевизор - антифриза
 
     (r'\^анай', r'\^аный'),  # манной - странный
@@ -1565,6 +1596,18 @@ if __name__ == '__main__':
     # =======================================
     # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
+
+    r = rhymed_fuzzy(accents, 'сиськи', None, [], 'виски', None, 'Case=Nom|Number=Sing'.split('|'))
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'ебальце', None, [], 'пальца', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'виртуозен', None, [], 'позе', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'нет', None, [], 'людоед', None, [])
+    assert(r is True)
 
     r = rhymed_fuzzy(accents, 'телевизор', None, [], 'антифриза', None, [])
     assert(r is True)
