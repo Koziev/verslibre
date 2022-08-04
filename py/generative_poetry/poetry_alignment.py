@@ -13,6 +13,7 @@
            для корректной разметки депрессяшек/артишоков, так как частеречная разметка на одном слове не работает и не позволяет
            выбрать корректный вариант ударения.
 22.06.2022 в артишоках для последней строки с одним словом для OOV делаем перебор всех вариантов ударности.
+04.08.2022 добавлен учет 3-словных словосочетаний типа "бок О бок"
 """
 
 import collections
@@ -286,7 +287,10 @@ class LineStressVariant(object):
         self.stressed_words = stressed_words
         self.stress_signature = list(itertools.chain(*(w.stress_signature for w in stressed_words)))
         self.stress_signature_str = ''.join(map(str, self.stress_signature))
-        self.total_score = reduce(lambda x, y: x*y, [w.score for w in stressed_words])
+        self.score_sequence(aligner)
+
+    def score_sequence(self, aligner):
+        self.total_score = reduce(lambda x, y: x*y, [w.score for w in self.stressed_words])
         self.penalties = []
 
         # добавка от 15-12-2021: два подряд ударных слога наказываем сильно!
@@ -307,7 +311,7 @@ class LineStressVariant(object):
             self.total_score *= 0.1
             self.penalties.append('@303')
 
-        for word1, word2 in zip(stressed_words, stressed_words[1:]):
+        for word1, word2 in zip(self.stressed_words, self.stressed_words[1:]):
             # 28-12-2021 проверяем цепочки согласных в смежных словах
             n_adjacent_consonants = word1.poetry_word.trailing_consonants + word2.poetry_word.leading_consonants
             if n_adjacent_consonants > 5:
@@ -321,11 +325,16 @@ class LineStressVariant(object):
                 self.total_score *= 0.5
                 self.penalties.append('@317')
 
-        for word1, word2, word3 in zip(stressed_words, stressed_words[1:], stressed_words[2:]):
+        for word1, word2, word3 in zip(self.stressed_words, self.stressed_words[1:], self.stressed_words[2:]):
             # 29-12-2021 Более двух подряд безударных слов - штрафуем
             if word1.new_stress_pos == -1 and word2.new_stress_pos == -1 and word3.new_stress_pos == -1:
-                self.total_score *= 0.1
-                self.penalties.append('@323')
+                # 03.08.2022 Бывают цепочки из трех слов, среди которых есть частицы вообще без гласных:
+                # я́ ж ведь не распла́чусь
+                #   ^^^^^^^^^
+                # Такие цепочки не штрафуем.
+                if count_vowels(word1.poetry_word.form) > 0 and count_vowels(word2.poetry_word.form) > 0 and count_vowels(word3.poetry_word.form) > 0:
+                    self.total_score *= 0.1
+                    self.penalties.append('@323')
 
         # 28-12-2021 штрафуем за подряд идущие короткие слова (1-2 буквы)
         #for word1, word2, word3 in zip(stressed_words, stressed_words[1:], stressed_words[2:]):
@@ -614,11 +623,27 @@ class PoetryLine(object):
             add_variants = []
             for colloc in aligner.collocations:
                 for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
-                    if colloc.hit(w1, w2):
+                    if colloc.hit2(w1, w2):
                         # из всех вариантов в variants делаем еще по 1 варианту
                         for variant in variants:
                             v = colloc.produce_stressed_line(variant, aligner)
                             add_variants.append(v)
+
+            if add_variants:
+                variants.extend(add_variants)
+
+        # 04-08-2022 добавляем варианты для триграмм типа "бок О бок"
+        if any((w in aligner.collocation3_first) for w in lwords) and any((w in aligner.collocation3_second) for w in lwords) and any((w in aligner.collocation3_third) for w in lwords):
+            # В строке возможно присутствует одно из особых словосочетаний длиной 3
+            add_variants = []
+            for colloc in aligner.collocations:
+                if len(colloc) == 3:
+                    for i1, (w1, w2, w3) in enumerate(zip(lwords, lwords[1:], lwords[2:])):
+                        if colloc.hit3(w1, w2, w3):
+                            # из всех вариантов в variants делаем еще по 1 варианту
+                            for variant in variants:
+                                v = colloc.produce_stressed_line(variant, aligner)
+                                add_variants.append(v)
 
             if add_variants:
                 variants.extend(add_variants)
@@ -683,6 +708,9 @@ class CollocationStress(object):
     def __repr__(self):
         return ' '.join(self.words) if self.words else ''
 
+    def __len__(self):
+        return len(self.words)
+
     @staticmethod
     def load_collocation(colloc_str):
         res = CollocationStress()
@@ -703,11 +731,15 @@ class CollocationStress(object):
 
         return res
 
-    def hit(self, word1, word2):
+    def hit2(self, word1, word2):
         return self.words[0] == word1 and self.words[1] == word2
+
+    def hit3(self, word1, word2, word3):
+        return self.words[0] == word1 and self.words[1] == word2 and self.words[2] == word3
 
     def produce_stressed_line(self, src_line, aligner):
         nw1 = len(src_line.stressed_words) - 1
+        nw2 = len(src_line.stressed_words) - 2
         for i1, word1 in enumerate(src_line.stressed_words):
             if word1.poetry_word.form.lower() == self.words[0]:
                 if i1 < nw1:
@@ -715,19 +747,45 @@ class CollocationStress(object):
                     if word2.poetry_word.form.lower() == self.words[1]:
                         new_stressed_words = list(src_line.stressed_words[:i1])
 
-                        if self.stressed_word_index == 0:
-                            # первое слово становится ударным, второе - безударное
-                            new_stressed_words.append(word1.build_stressed(self.stress_pos))
-                            new_stressed_words.append(word2.build_unstressed())
-                        else:
-                            # первое слово становится безударным, второе - ударное
-                            new_stressed_words.append(word1.build_unstressed())
-                            new_stressed_words.append(word2.build_stressed(self.stress_pos))
+                        if len(self.words) == 2:
+                            if self.stressed_word_index == 0:
+                                # первое слово становится ударным, второе - безударное
+                                new_stressed_words.append(word1.build_stressed(self.stress_pos))
+                                new_stressed_words.append(word2.build_unstressed())
+                            else:
+                                # первое слово становится безударным, второе - ударное
+                                new_stressed_words.append(word1.build_unstressed())
+                                new_stressed_words.append(word2.build_stressed(self.stress_pos))
 
-                        # остаток слов справа от второго слова
-                        new_stressed_words.extend(src_line.stressed_words[i1+2:])
-                        new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
-                        return new_variant
+                            # остаток слов справа от второго слова
+                            new_stressed_words.extend(src_line.stressed_words[i1+2:])
+                            new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
+                            return new_variant
+                        elif len(self.words) == 3:
+                            if i1 < nw2:
+                                word3 = src_line.stressed_words[i1 + 2]
+                                if word3.poetry_word.form.lower() == self.words[2]:
+
+                                    if self.stressed_word_index == 0:
+                                        # первое слово становится ударным, второе и третье - безударные
+                                        new_stressed_words.append(word1.build_stressed(self.stress_pos))
+                                        new_stressed_words.append(word2.build_unstressed())
+                                        new_stressed_words.append(word3.build_unstressed())
+                                    elif self.stressed_word_index == 1:
+                                        # первое и третье слова становятся безударными, второе - ударное
+                                        new_stressed_words.append(word1.build_unstressed())
+                                        new_stressed_words.append(word2.build_stressed(self.stress_pos))
+                                        new_stressed_words.append(word3.build_unstressed())
+                                    else:
+                                        # первое и второе слова становятся безударными, третье - ударное
+                                        new_stressed_words.append(word1.build_unstressed())
+                                        new_stressed_words.append(word2.build_unstressed())
+                                        new_stressed_words.append(word3.build_stressed(self.stress_pos))
+
+                                    # остаток слов справа от третьего слова
+                                    new_stressed_words.extend(src_line.stressed_words[i1 + 3:])
+                                    new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
+                                    return new_variant
 
         raise ValueError('Inconsistent call of CollocationStress::produce_stressed_line')
 
@@ -740,6 +798,11 @@ class PoetryStressAligner(object):
         self.collocations = []
         self.collocation2_first = set()
         self.collocation2_second = set()
+
+        self.collocation3_first = set()
+        self.collocation3_second = set()
+        self.collocation3_third = set()
+
         with io.open(os.path.join(data_dir, 'collocation_accents.dat'), 'r', encoding='utf-8') as rdr:
             for line in rdr:
                 line = line.strip()
@@ -752,6 +815,11 @@ class PoetryStressAligner(object):
                     # обновляем хэш для быстрой проверки наличия словосочетания длиной 2
                     self.collocation2_first.add(c.words[0])
                     self.collocation2_second.add(c.words[1])
+                elif len(c.words) == 3:
+                    # для словосочетаний длиной 3.
+                    self.collocation3_first.add(c.words[0])
+                    self.collocation3_second.add(c.words[1])
+                    self.collocation3_third.add(c.words[2])
 
         self.bad_signature1 = set()
         with io.open(os.path.join(data_dir, 'bad_signature1.dat'), 'r', encoding='utf-8') as rdr:
@@ -1043,10 +1111,12 @@ class PoetryStressAligner(object):
                 rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
             else:
                 if check_rhymes:
-                    continue
+                    #continue
+                    score1234, mapped_meter = self._align_line_groups([(plinev[0],), (plinev[1],), (plinev[2],), (plinev[3],)])
+                    rhyming_score = 0.1*(1.0 - COEFF['@225'] * (1.0 - pow(score1234, 0.5)))
                 else:
-                    rhyming_score = 0.5
                     score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
+                    rhyming_score = 0.5*(1.0 - COEFF['@225'] * (1.0 - pow(score1234, 0.5)))
 
             score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
 
@@ -1067,12 +1137,12 @@ class PoetryStressAligner(object):
                 best_ivar = ivar
                 best_rhyme_scheme = rhyme_scheme
 
-        if best_rhyme_scheme is None or best_rhyme_scheme == '----':
-            if check_rhymes:
-                # Не получилось подобрать рифмовку окончаний строк.
-                # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
-                # можно было вывести в лог строки с каким-то дефолтными
-                return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+        #if best_rhyme_scheme is None or best_rhyme_scheme == '----':
+        #    if check_rhymes:
+        #        # Не получилось подобрать рифмовку окончаний строк.
+        #        # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
+        #        # можно было вывести в лог строки с каким-то дефолтными
+        #        return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
 
         # Возвращаем найденный вариант разметки и его оценку
         return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
@@ -1104,6 +1174,8 @@ class PoetryStressAligner(object):
                     # таких унылых рифм отдельную проверку в другой части кода.
                     if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower():
                         rhyme_scheme = 'AA'
+                else:
+                    rhyme_scheme = '--'
             else:
                 rhyme_scheme = '--'
 
@@ -1368,7 +1440,7 @@ if __name__ == '__main__':
 Тако́й вот бра́т кордебале́т""", "ABAB"),
 
         ("""Руко́ю ле́вой бо́льше шевели́те
-Чтоб ду́мали, что Вы́ ещё́ всё жи́вы
+Чтоб ду́мали, что Вы ещё́ всё жи́вы
 А э́ти во́семь та́ктов - не дыши́те
 Умри́те! Не игра́йте так фальши́во""", "ABAB"),
 
@@ -1383,7 +1455,7 @@ if __name__ == '__main__':
 И бу́дем вме́сте, навсегда́! Но... виртуа́льно""", "ABAB"),
 
         ("""Здра́вствуй До́ня белогри́вый
-Получи́лось ка́к-то ло́вко
+Получи́лось как-то ло́вко
 Е́сли че́стно, некраси́во
 Объего́рил сно́ва Во́вку""", "ABAB"),
 
@@ -1403,11 +1475,11 @@ if __name__ == '__main__':
 Стихи́ отпра́вимся писа́ть""", "ABAB"),
 
         ("""Ста́л он расспра́шивать сосе́да
-Ведь на рыба́лку, хо́ть с обе́да
-Ухо́дит то́т, иль у́тром ра́но
+Ведь на рыба́лку, хоть с обе́да
+Ухо́дит тот, иль у́тром ра́но
 И не вопи́т супру́га рья́но""", "AABB"),
 
-        ("""Но де́ло в то́м, что спе́реди у Да́мы
+        ("""Но де́ло в том, что спе́реди у Да́мы
 Для гла́з мужски́х есть ва́жные места́
 И чтоб поздне́е не случи́лось дра́мы
 Вы покажи́те зу́бки и уста́""", "ABAB"),
@@ -1419,7 +1491,7 @@ if __name__ == '__main__':
 
         ("""То в поры́ве настрое́нья
 Пля́шет в ди́ком упое́нье
-То́, и во́все вдруг курьё́зы
+То, и во́все вдруг курьё́зы
 На стекле́ рису́ет слё́зы""", "AABB"),
 
         ("""А второ́й сосе́д - банди́т
@@ -1473,14 +1545,14 @@ if __name__ == '__main__':
 Стоя́ть под натя́нутым па́русом""", "ABAB"),
 
         ("""Но что́ же како́е-то чу́вство щемя́щее
-        как - бу́дто сего́дня после́дняя встре́ча у на́с
+        как - будто сего́дня после́дняя встре́ча у на́с
         секу́нды, мину́ты, как пти́цы паря́щие
         то ко́смоса шё́пот, то ве́тра внеза́пного ба́с""", "ABAB"),
 
         ("""Бо́ль из про́шлых дне́й остра́
         Ла́вры вновь несё́т на блю́де
         От утра́ и до утра́
-        Ды́шит та́кже, ка́к и лю́ди""", "ABAB"),
+        Ды́шит та́кже, как и лю́ди""", "ABAB"),
 
         ("""пролета́ет ле́то
         гру́сти не тая́
@@ -1531,6 +1603,45 @@ if __name__ == '__main__':
         так э́то де́лать ви́д что я́
         не ви́жу у отца́ неве́сты
         ружья́""", "-A-A"),
+
+        ("""меж на́ми пробежа́ла и́скра
+         а у тебя́ в рука́х кани́стра""", 'AA'),
+
+        ("""риску́я показа́ться гру́бым
+         бе́гу за ва́ми с ледору́бом""", "AA"),
+
+        ("""бы́л в се́ксе о́чень виртуо́зен
+        но ли́шь в миссионе́рской по́зе""", "AA"),
+
+        ("""из но́рки вы́сунув еба́льце
+        мне бурунду́к отгры́з два́ па́льца""", "AA"),
+
+        ("""от ушеспание́льной си́ськи
+        гле́б вы́жрал во́дку ро́м и ви́ски""", "AA"),
+
+        ("""фура́жка с ге́рбом ство́л и кси́ва
+        лицо́ печа́льно но́ краси́во""", "AA"),
+
+        ("""про меня́ вы лжё́те
+        вся́ческую гну́сь
+        я́ ж ведь не распла́чусь
+        я́ ж ведь расплачу́сь""", "-A-A"),
+
+        ("""на сва́дьбе бы́вшего супру́га
+        на би́с спляса́ла гопака́
+        криви́лась но́вая вот су́ка
+        кака́""", "-A-A"),
+
+        ("""слеза́ прокля́той комсомо́лки
+        прожгла́ исто́рию наскво́зь
+        и ходорко́вскому на те́мя
+        свинцо́вой ка́плей селяви́""", "----"),
+
+        ("""скрипя́ зуба́ми шестерё́нки
+        живу́т бок о́ бок без любви́""", "--"),
+
+        #("""с тобо́ю жи́ли мы бок о́ бок
+        #веще́й нажи́ли пя́ть коро́бок""", "AA"),
 
         #("""мы вме́сте с тобо́й занима́лись цигу́н
         # и вме́сте ходи́ли на йо́гу

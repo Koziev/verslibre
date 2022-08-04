@@ -499,6 +499,7 @@ class Accents:
                        ('ье', 'ъе'),  # сьЕли
                        ('сн', 'стн'),  # грусный
                        ('цц', 'тц'),  # браццы
+                       ('цц', 'дц'),  # триццать
                        ('чт', 'чьт'),  # прячте
                        ('тьса', 'тся'),  # рвЕтьса
                        ('тьса', 'ться'),  # скрытьса
@@ -515,10 +516,20 @@ class Accents:
                     return self.word_accents_dict[word2]
 
         # восстанавливаем мягкий знак в "стоиш" "сможеш"  "сбереч"
-        if word.endswith('иш') or word.endswith('еш') or word.endswith('еч'):
-            word2 = word + 'ь'
-            if word2 in self.word_accents_dict:
-                return self.word_accents_dict[word2]
+        # встретимса
+        #        ^^^
+        e_corrections = [('иш', 'ишь'),  # стоиш
+                         ('еш', 'ешь'),  # сможеш
+                         ('еч', 'ечь'),  # сбереч
+                         ('мса', 'мся'),  # встретимса
+                         ]
+        for e1, e2 in e_corrections:
+            if word.endswith(e1):
+                word2 = word[:-len(e1)] + e2
+                if word2 in self.word_accents_dict:
+                    return self.word_accents_dict[word2]
+
+
 
         # убираем финальный "ь" после шипящих:
         # клавишь
@@ -529,14 +540,13 @@ class Accents:
 
         # повтор согласных сокращаем до одной согласной:
         # щщупать
-        cn = re.search(r'(.)\1', word, flags=re.I)
-        if cn:
-            c1 = cn.group(1)[0]
-            word2 = re.sub(c1+'{2,}', c1, word, flags=re.I)
-            if word2 in self.word_accents_dict:
-                return self.word_accents_dict[word2]
-
-
+        if len(word) > 1:
+            cn = re.search(r'(.)\1', word, flags=re.I)
+            if cn:
+                c1 = cn.group(1)[0]
+                word2 = re.sub(c1+'{2,}', c1, word, flags=re.I)
+                if word2 in self.word_accents_dict:
+                    return self.word_accents_dict[word2]
 
         # Некоторые грамматические формы в русском языке имеют
         # фиксированное ударение.
@@ -1433,7 +1443,7 @@ if __name__ == '__main__':
              'трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split() +\
              'крУтиш знАеш смОжеш льЮцца бъЕтся грУсный брАццы прЯчте блЕщщут щщУпать Эхооооо мчИцца рвЕтьса сссУка клАвишь'.split() +\
              'плОтьник щщенкИ скрЫтьса стрАсно сьЕли дмИтрий дмИттрий льЮцца спрЯчте свЕточь здАчу гнУтса'.split() +\
-             'швАбрщик сберЕч'.split()
+             'швАбрщик сберЕч встрЕтимса трИццать щщАстья'.split()
     for word in xwords:
         n_vowels = 0
         true_stress = -1
