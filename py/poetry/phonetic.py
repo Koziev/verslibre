@@ -309,6 +309,13 @@ class Accents:
         # ОКОНЦЕ -> ОКОНЦЭ
         s = s.replace('це', 'цэ')
 
+        # БЕЗБРАЧЬЯ
+        if 'чь' in s:
+            s = s.replace('чья', 'ча')
+            s = s.replace('чье', 'чэ')
+            s = s.replace('чьё', 'чо')
+            s = s.replace('чью', 'чё')
+
         # двойные согласные:
         # СУББОТА -> СУБОТА
         s = re.sub(r'([бвгджзклмнпрстфхцчшщ])\1', r'\1', s)
@@ -801,9 +808,41 @@ def are_phonetically_equal(s1, s2):
     return False
 
 
-def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
+def transcript_unstressed(chars):
+    if chars is None or len(chars) == 0:
+        return ''
+
+    phonems = []
+    for c in chars:
+        if c == 'о':
+            phonems.append('а')
+        elif c == 'и':
+            phonems.append('ы')
+        elif c == 'ю':
+            phonems.append('у')
+        elif c == 'я':
+            phonems.append('а')
+        elif c == 'ё':
+            phonems.append('о')
+        elif c == 'е':
+            phonems.append('э')
+        else:
+            phonems.append(c)
+
+    if phonems[-1] == 'ж':
+        phonems[-1] = 'ш'
+
+    res = ''.join(phonems)
+    return res
+
+
+
+
+def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags, unstressed_tail):
+    unstressed_tail_transcription = transcript_unstressed(unstressed_tail)
+
     if len(word) == 1:
-        return word
+        return word + unstressed_tail_transcription
 
     ending = None
     v_counter = 0
@@ -811,7 +850,7 @@ def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
         if c in "уеыаоэёяию":
             v_counter += 1
             if v_counter == stress:
-                if i == len(word) - 1:
+                if i == len(word) - 1 and len(unstressed_tail) == 0:
                     # Ударная гласная в конце слова, берем последние 2 или 3 буквы
                     # ГУБА
                     #   ^^
@@ -875,7 +914,7 @@ def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags):
     if ending.startswith('ё'):
         ending = 'о' + ending[1:]
 
-    return ending
+    return ending + unstressed_tail_transcription
 
 
 def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
@@ -901,26 +940,27 @@ def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
             return word1.endswith('я')
 
         # Теперь все буквы, начиная с ударной гласной
-        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1)
-        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2)
+        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1, '')
+        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2, '')
 
         return are_phonetically_equal(ending1, ending2)
 
     return False
 
 
-def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
+def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_tail2):
     word1 = accentuator.yoficate(accentuator.sanitize_word(word1))
     word2 = accentuator.yoficate(accentuator.sanitize_word(word2))
 
-    if (word1.lower(), word2.lower()) in accentuator.rhymed_words or (word2.lower(), word1.lower()) in accentuator.rhymed_words:
-        return True
+    if not unstressed_tail1 and not unstressed_tail2:
+        if (word1.lower(), word2.lower()) in accentuator.rhymed_words or (word2.lower(), word1.lower()) in accentuator.rhymed_words:
+            return True
 
     vow_count1 = accentuator.get_vowel_count(word1)
-    pos1 = vow_count1 - stress1
+    pos1 = vow_count1 - stress1 + accentuator.get_vowel_count(unstressed_tail1)
 
     vow_count2 = accentuator.get_vowel_count(word2)
-    pos2 = vow_count2 - stress2
+    pos2 = vow_count2 - stress2 + accentuator.get_vowel_count(unstressed_tail2)
 
     # смещение ударной гласной от конца слова должно быть одно и то же
     # для проверяемых слов.
@@ -934,8 +974,8 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
             return True
 
         # Получаем клаузулы - все буквы, начиная с ударной гласной
-        ending1 = extract_ending_prononciation_after_stress(accentuator, word1, stress1, ud_tags1)
-        ending2 = extract_ending_prononciation_after_stress(accentuator, word2, stress2, ud_tags2)
+        ending1 = extract_ending_prononciation_after_stress(accentuator, word1, stress1, ud_tags1, unstressed_tail1)
+        ending2 = extract_ending_prononciation_after_stress(accentuator, word2, stress2, ud_tags2, unstressed_tail2)
 
         # Фонетическое сравнение клаузул.
         return are_phonetically_equal(ending1, ending2)
@@ -945,6 +985,10 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
 
 
 fuzzy_ending_pairs = [
+    (r'\^утам', r'\^уты'),  # парашютам - тьфу ты
+
+    (r'\^ады', r'\^аты'),  # пощады - борща ты
+
     (r'\^овый', r'\^овай'),  # трёхочковый - волочковой
 
     (r'\^ымым', r'\^ымам'),  # одерж^имым - ж^имом
@@ -1035,7 +1079,9 @@ def check_ending_rx_matching_2(word1, word2, s1, s2):
         return False
 
 
-def render_xword(accentuator, word, stress_pos, ud_tags):
+def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_tail):
+    unstressed_tail_transcript = transcript_unstressed(unstressed_tail)
+
     phonems = []
 
     VOWELS = 'уеыаоэёяию'
@@ -1144,7 +1190,7 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
     if len(phonems) > 2 and phonems[-1] == 'ь' and phonems[-2] in 'шч':  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ", РОЖЬ, МЫШЬ
         phonems = phonems[:-1]
 
-    xword = ''.join(phonems)
+    xword = ''.join(phonems) + unstressed_tail_transcript
     #xword = accentuator.pronounce(xword)
 
     # СОЛНЦЕ -> СОНЦЕ
@@ -1220,14 +1266,18 @@ def render_xword(accentuator, word, stress_pos, ud_tags):
 
 
 def rhymed_fuzzy(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
+    return rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, None, word2, stress2, ud_tags2, None)
+
+
+def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_tail2):
     if stress1 is None:
         stress1 = accentuator.get_accent(word1, ud_tags1)
 
     if stress2 is None:
         stress2 = accentuator.get_accent(word2, ud_tags2)
 
-    xword1, clausula1 = render_xword(accentuator, word1, stress1, ud_tags1)
-    xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2)
+    xword1, clausula1 = render_xword(accentuator, word1, stress1, ud_tags1, unstressed_tail1)
+    xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2, unstressed_tail2)
 
     if len(clausula1) >= 3 and clausula1 == clausula2:
         # клаузуллы достаточно длинные и совпадают:

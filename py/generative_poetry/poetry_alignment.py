@@ -25,13 +25,11 @@ import math
 import jellyfish
 import re
 
-from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy
+from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy2
 from generative_poetry.udpipe_parser import UdpipeParser
 from generative_poetry.stanza_parser import StanzaParser
 from generative_poetry.metre_classifier import get_syllables
-from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.whitespace_normalization import normalize_whitespaces
-
 
 
 # Коэффициенты для штрафов за разные отступления от идеальной метрики.
@@ -138,7 +136,7 @@ class PoetryWord(object):
         else:
             self.alternative_stress_positions = [stress_pos]
 
-        self.is_rhyming_word = False  # отмечаем последнее слово в каждой строке
+        #self.is_rhyming_word = False  # отмечаем последнее слово в каждой строке
 
         self.leading_consonants = 0  # кол-во согласных ДО первой гласной
         self.trailing_consonants = 0  # кол-во согласных ПОСЛЕ последней гласной
@@ -204,13 +202,13 @@ class PoetryWord(object):
             # Мо́жет что́ - нибу́дь напла́чу
             #             ~~~~~~
             variants.append(WordStressVariant(self, -1, 1.0))
-        elif uform == 'нет' and not self.is_rhyming_word:
+        elif uform == 'нет':  # and not self.is_rhyming_word:
             # частицу (или глагол для Stanza) "нет" с ударением штрафуем
             variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
 
             # а вариант без ударения - с нормальным скором:
             variants.append(WordStressVariant(self, -1, COEFF['@71']))
-        elif self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ') and not self.is_rhyming_word:
+        elif self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ'): # and not self.is_rhyming_word:
             if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во') and self.upos == 'ADP':
                 # эти предлоги никогда не делаем ударными
                 variants.append(WordStressVariant(self, -1, 1.0))
@@ -239,29 +237,25 @@ class PoetryWord(object):
                     variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
 
                 # а вариант без ударения - с нормальным скором:
-                if not self.is_rhyming_word:
-                    variants.append(WordStressVariant(self, -1, COEFF['@71']))
+                #if not self.is_rhyming_word:
+                variants.append(WordStressVariant(self, -1, COEFF['@71']))
         elif self.upos in ('PRON', 'ADV', 'DET'):
-            if self.is_rhyming_word:
-                # исходный вариант с ударением.
-                variants.append(WordStressVariant(self, self.stress_pos, 1.0))
+            # Для односложных местоимений (Я), наречий (ТУТ, ГДЕ) и слов типа МОЙ, ВСЯ, если они не последние в строке,
+            # добавляем вариант без ударения с дисконтом.
+            if nvowels == 1:
+                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@75']))
+                # вариант без ударения
+                variants.append(WordStressVariant(self, -1, COEFF['@77']))
             else:
-                # Для односложных местоимений (Я), наречий (ТУТ, ГДЕ) и слов типа МОЙ, ВСЯ, если они не последние в строке,
-                # добавляем вариант без ударения с дисконтом.
-                if nvowels == 1:
-                    variants.append(WordStressVariant(self, self.stress_pos, COEFF['@75']))
-                    # вариант без ударения
-                    variants.append(WordStressVariant(self, -1, COEFF['@77']))
-                else:
-                    if uform in ['эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей',
-                                 'мою', 'твою', 'его', 'ее', 'её', 'себе', 'меня', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
-                                 'уже', 'этом', 'тебе']:
-                        # Безударный вариант для таких двусложных прилагательных
-                        variants.append(WordStressVariant(self, -1, COEFF['@77_2']))
+                if uform in ['эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей',
+                             'мою', 'твою', 'его', 'ее', 'её', 'себе', 'меня', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
+                             'уже', 'этом', 'тебе']:
+                    # Безударный вариант для таких двусложных прилагательных
+                    variants.append(WordStressVariant(self, -1, COEFF['@77_2']))
 
-                    variants.append(WordStressVariant(self, self.stress_pos, COEFF['@79']))
+                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@79']))
         else:
-            if uform in ['есть', 'раз', 'быть', 'будь'] and not self.is_rhyming_word:
+            if uform in ['есть', 'раз', 'быть', 'будь']:  # and not self.is_rhyming_word:
                 # безударный вариант
                 variants.append(WordStressVariant(self, -1, COEFF['@143']))
 
@@ -281,17 +275,46 @@ def sum1(arr):
     return sum((x == 1) for x in arr)
 
 
+class RhymingTail(object):
+    def __init__(self, stressed_word, unstressed_words):
+        self.stressed_word = stressed_word
+        self.unstressed_words = unstressed_words
+        self.unstressed_tail = ''.join(w.poetry_word.form for w in unstressed_words)
+        self.ok = stressed_word is not None and stressed_word.new_stress_pos != -1
+
+    def is_ok(self):
+        return self.ok
+
+    def is_simple(self):
+        return len(self.unstressed_words) == 0
+
+    def __repr__(self):
+        s = self.stressed_word.stressed_form
+        if self.unstressed_tail:
+            s += ' ' + self.unstressed_tail
+        return s
+
+    def get_unstressed_tail(self):
+        return self.unstressed_tail
+
+
 class LineStressVariant(object):
     def __init__(self, poetry_line, stressed_words, aligner):
         self.poetry_line = poetry_line
         self.stressed_words = stressed_words
         self.stress_signature = list(itertools.chain(*(w.stress_signature for w in stressed_words)))
         self.stress_signature_str = ''.join(map(str, self.stress_signature))
+        self.init_rhyming_tail()
         self.score_sequence(aligner)
 
     def score_sequence(self, aligner):
         self.total_score = reduce(lambda x, y: x*y, [w.score for w in self.stressed_words])
         self.penalties = []
+
+        # 04-08-2022 если клаузулла безударная, то имеем кривое оформление ритмического рисунка.
+        if not self.rhyming_tail.is_ok():
+            self.total_score *= 0.1
+            self.penalties.append('@307')
 
         # добавка от 15-12-2021: два подряд ударных слога наказываем сильно!
         if '11' in self.stress_signature_str:
@@ -301,9 +324,9 @@ class LineStressVariant(object):
         # добавка от 16-12-2021: безударное последнее слово наказываем сильно!
         # коррекция от 05.06.2022: так как последним бывает пунктуатор, используем метод для получения рифмуемого слова
         #if self.stressed_words[-1].new_stress_pos == -1:
-        if self.get_last_rhyming_word().new_stress_pos == -1:
-            self.total_score *= 0.1
-            self.penalties.append('@297')
+        #if self.get_last_rhyming_word().new_stress_pos == -1:
+        #    self.total_score *= 0.1
+        #    self.penalties.append('@297')
 
         # 01-01-2022 ударную частицу "и" в начале строки наказываем сильно
         # 〚И́(0.500) споко́йно детворе́〛(0.500)
@@ -354,6 +377,27 @@ class LineStressVariant(object):
             if self.stress_signature_str in aligner.bad_signature1:
                 self.total_score *= 0.1
                 self.penalties.append('@340')
+
+    def init_rhyming_tail(self):
+        stressed_word = None
+        unstressed_words = []
+
+        # Ищем справа слово с ударением
+        i = len(self.stressed_words)-1
+        while i >= 0:
+            pword = self.stressed_words[i]
+            if pword.new_stress_pos != -1 or count_vowels(pword.poetry_word.form) > 1:
+                stressed_word = pword
+
+                # все слова, кроме пунктуации, справа от данного сформируют безударный хвост клаузуллы
+                for i2 in range(i+1, len(self.stressed_words)):
+                    if self.stressed_words[i2].poetry_word.upos != 'PUNCT':
+                        unstressed_words.append(self.stressed_words[i2])
+
+                break
+            i -= 1
+
+        self.rhyming_tail = RhymingTail(stressed_word, unstressed_words)
 
     def __repr__(self):
         s = '〚' + ' '.join(w.__repr__() for w in self.stressed_words) + '〛'
@@ -414,13 +458,15 @@ class LineStressVariant(object):
             output_tokens.extend(word.split_to_syllables())
         return output_tokens
 
-    def get_last_rhyming_word(self):
-        # Вернем последнее слово в строке, которое надо проверять на рифмовку.
-        # Финальную пунктуацию игнорируем.
-        for pword in self.stressed_words[::-1]:
-            if pword.poetry_word.upos != 'PUNCT':
-                return pword
-        return None
+    #def get_last_rhyming_word(self):
+    #    # Вернем последнее слово в строке, которое надо проверять на рифмовку.
+    #    # Финальную пунктуацию игнорируем.
+    #    for pword in self.stressed_words[::-1]:
+    #        if pword.poetry_word.upos != 'PUNCT':
+    #            return pword
+    #    return None
+    def get_rhyming_tail(self):
+        return self.rhyming_tail
 
 
 def count_vowels(s):
@@ -602,7 +648,7 @@ class PoetryLine(object):
         located = False
         for pword in self.pwords[::-1]:
             if pword.upos != 'PUNCT':
-                pword.is_rhyming_word = True
+                #pword.is_rhyming_word = True
                 located = True
                 break
         if not located:
@@ -933,23 +979,37 @@ class PoetryStressAligner(object):
         else:
             raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
 
-    def check_rhyming(self, poetry_word1, poetry_word2):
-        # 01.02.2022 проверяем слова с ударениями по справочнику рифмовки
-        f1 = poetry_word1.stressed_form
-        f2 = poetry_word2.stressed_form
-        if (f1, f2) in self.accentuator.rhymed_words or (f2, f1) in self.accentuator.rhymed_words:
-            return True
+    def check_rhyming(self, rhyming_tail1, rhyming_tail2):
+        if not rhyming_tail1.is_ok() or not rhyming_tail2.is_ok():
+            return False
+
+        poetry_word1 = rhyming_tail1.stressed_word
+        poetry_word2 = rhyming_tail2.stressed_word
+
+        if rhyming_tail1.is_simple() and rhyming_tail2.is_simple():
+            # 01.02.2022 проверяем слова с ударениями по справочнику рифмовки
+            f1 = poetry_word1.stressed_form
+            f2 = poetry_word2.stressed_form
+            if (f1, f2) in self.accentuator.rhymed_words or (f2, f1) in self.accentuator.rhymed_words:
+                return True
+
+            # Считаем, что слово не рифмуется само с собой
+            if poetry_word1.form.lower() == poetry_word2.form.lower():
+                return False
+
+        unstressed_tail1 = rhyming_tail1.unstressed_tail
+        unstressed_tail2 = rhyming_tail2.unstressed_tail
 
         r = rhymed2(self.accentuator,
-                    poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
-                    poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
+                    poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags, unstressed_tail1,
+                    poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags, unstressed_tail2)
         if r:
             return True
 
         if self.allow_fuzzy_rhyming:
-            return rhymed_fuzzy(self.accentuator,
-                                poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags,
-                                poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags)
+            return rhymed_fuzzy2(self.accentuator,
+                                poetry_word1.poetry_word.form, poetry_word1.new_stress_pos, [poetry_word1.poetry_word.upos] + poetry_word1.poetry_word.tags, unstressed_tail1,
+                                poetry_word2.poetry_word.form, poetry_word2.new_stress_pos, [poetry_word2.poetry_word.upos] + poetry_word2.poetry_word.tags, unstressed_tail2)
 
         return False
 
@@ -997,7 +1057,7 @@ class PoetryStressAligner(object):
         for ivar, plinev in enumerate(vvx):
             # plinev это набор из четырех экземпляров LineStressVariant.
 
-            last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+            last_pwords = [pline.get_rhyming_tail() for pline in plinev]
             r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
             r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
             r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
@@ -1047,7 +1107,7 @@ class PoetryStressAligner(object):
             mapped_meter = None
 
             # проверяем все пары слов
-            last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+            last_pwords = [pline.get_rhyming_tail() for pline in plinev]
             r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
             r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
             r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
@@ -1060,28 +1120,20 @@ class PoetryStressAligner(object):
             if r01 and r12 and r23:
                 rhyme_scheme = 'AAAA'
             elif r02 and r13:
-                # Считаем, что слово не рифмуется само с собой, чтобы не делать для отсечения
-                # таких унылых рифм отдельную проверку в другой части кода.
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                    rhyme_scheme = 'ABAB'
+                rhyme_scheme = 'ABAB'
             elif r03 and r12:
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower():
-                    rhyme_scheme = 'ABBA'
+                rhyme_scheme = 'ABBA'
             # 22-12-2021 добавлена рифмовка AABB
             elif r01 and r23:
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[2].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                    rhyme_scheme = 'AABB'
+                rhyme_scheme = 'AABB'
             # 28-12-2021 добавлена рифмовка "рубаи" AABA
             elif r01 and r03 and not r02:
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower() and last_pwords[0].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                    rhyme_scheme = 'AABA'
+                rhyme_scheme = 'AABA'
             # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
             elif r02 and not r13:
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                    rhyme_scheme = 'A-A-'
+                rhyme_scheme = 'A-A-'
             elif not r02 and r13:
-                if last_pwords[0].poetry_word.form.lower() != last_pwords[2].poetry_word.form.lower() and last_pwords[1].poetry_word.form.lower() != last_pwords[3].poetry_word.form.lower():
-                    rhyme_scheme = '-A-A'
+                rhyme_scheme = '-A-A'
             else:
                 rhyme_scheme = '----'
 
@@ -1168,12 +1220,10 @@ class PoetryStressAligner(object):
             # Определяем рифмуемость
             rhyme_scheme = None
             if check_rhymes:
-                last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+                #last_pwords = [pline.get_last_rhyming_word() for pline in plinev]
+                last_pwords = [pline.get_rhyming_tail() for pline in plinev]
                 if self.check_rhyming(last_pwords[0], last_pwords[1]):
-                    # Считаем, что слово не рифмуется само с собой, чтобы не делать для отсечения
-                    # таких унылых рифм отдельную проверку в другой части кода.
-                    if last_pwords[0].poetry_word.form.lower() != last_pwords[1].poetry_word.form.lower():
-                        rhyme_scheme = 'AA'
+                    rhyme_scheme = 'AA'
                 else:
                     rhyme_scheme = '--'
             else:
@@ -1268,7 +1318,7 @@ class PoetryStressAligner(object):
     def detect_poor_poetry(self, alignment):
         """Несколько эвристик для обнаружения скучных рифм, которые мы не хотим получать"""
 
-        last_words = [pline.get_last_rhyming_word().form.lower() for pline in alignment.poetry_lines]
+        last_words = [pline.get_rhyming_tail().stressed_word.form.lower() for pline in alignment.poetry_lines]
 
         # Если два глагольных окончания, причем одно является хвостом другого - это бедная рифма:
         # ждать - подождать
@@ -1276,19 +1326,21 @@ class PoetryStressAligner(object):
         # etc.
         rhyme_pairs = []
         if alignment.rhyme_scheme == 'ABAB':
-            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[2].get_last_rhyming_word()))
-            rhyme_pairs.append((alignment.poetry_lines[1].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[2].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[1].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
         elif alignment.rhyme_scheme == 'ABBA':
-            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
-            rhyme_pairs.append((alignment.poetry_lines[1].get_last_rhyming_word(), alignment.poetry_lines[2].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[1].get_rhyming_tail(), alignment.poetry_lines[2].get_rhyming_tail()))
         elif alignment.rhyme_scheme == 'AABA':
-            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[1].get_last_rhyming_word()))
-            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[1].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
         elif alignment.rhyme_scheme == 'AABB':
-            rhyme_pairs.append((alignment.poetry_lines[0].get_last_rhyming_word(), alignment.poetry_lines[1].get_last_rhyming_word()))
-            rhyme_pairs.append((alignment.poetry_lines[2].get_last_rhyming_word(), alignment.poetry_lines[3].get_last_rhyming_word()))
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[1].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[2].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
 
-        for word1, word2 in rhyme_pairs:
+        for tail1, tail2 in rhyme_pairs:
+            word1 = tail1.stressed_word
+            word2 = tail2.stressed_word
             if word1.poetry_word.upos == 'VERB' and word2.poetry_word.upos == 'VERB':
                 # 11-01-2022 если пара слов внесена в специальный список рифмующихся слов, то считаем,
                 # что тут все нормально:  ВИТАЮ-ТАЮ
@@ -1399,10 +1451,10 @@ if __name__ == '__main__':
         ("""кто́ не лю́бит ка́ши ма́нной —
 то́т како́й-то о́чень стра́нный!""", "AA"),
 
-        ("""а моя́ любо́вь на́
+        ("""а моя́ любо́вь на
 со́том этаже́
 я́ заколеба́юсь
-поднима́ться же́""", "-A-A"),
+поднима́ться же""", "----"),
 
         ("""Хо́ть бы ра́з
 Поли́л наро́чно
@@ -1499,7 +1551,7 @@ if __name__ == '__main__':
 Ве́чно хо́дит под охра́ной
 Му́тный би́знес шуруди́т""", "AABA"),
 
-        ("""Где застря́л жени́х мо́й
+        ("""Где застря́л жени́х мой
 Где? Жду́ его́ в трево́ге
 Не подо́х ли бе́лый ко́нь
 Где́-нибудь в доро́ге""", "-A-A"),
@@ -1560,9 +1612,9 @@ if __name__ == '__main__':
         пролета́ю я́""", "-A-A"),
 
         ("""хардко́р на у́лице сосе́дней
-        вчера́ ната́ша умерла́
-        и никола́ю наконе́ц то́
-        дала́""", "-A-A"),
+вчера́ ната́ша умерла́
+и никола́ю наконе́ц то
+дала́""", "-A-A"),
 
         ("""он удира́л от нас двора́ми
         едва успе́в сказа́ть свекла́
@@ -1640,8 +1692,181 @@ if __name__ == '__main__':
         ("""скрипя́ зуба́ми шестерё́нки
         живу́т бок о́ бок без любви́""", "--"),
 
-        #("""с тобо́ю жи́ли мы бок о́ бок
-        #веще́й нажи́ли пя́ть коро́бок""", "AA"),
+        ("""я мо́лча загора́л на ка́мне
+        а вы́ по па́льцам с молотка́ мне""", "AA"),
+
+        ("""ба́рмен нале́йте ка мохи́то
+        а то́ не тя́нет на грехи́ то""", "AA"),
+
+        ("""голки́пер че́шский не меша́й бы
+        забро́сили б ещё́ две́ ша́йбы""", "AA"),
+
+        ("""ми́р электри́чества бичу́я
+        иду́ держа́ в руке́ свечу́ я""", "AA"),
+
+        ("""с тобо́ю жи́ли мы́ бок о́ бок
+        веще́й нажи́ли пя́ть коро́бок""", "AA"),
+
+        ("""не смо́г ма́г сня́ть вене́ц безбра́чья
+        ведь развожу́ кото́в и сра́ч я""", "AA"),
+
+        ("""два́ ме́рса джи́п четы́ре во́львы
+        совсе́м сбеси́лись с жи́ру что́ ль вы""", "AA"),
+
+        ("""а то́чно у тебя три́ я́хты
+        живе́шь в хруще́вке в ебеня́х ты""", "AA"),
+
+        ("""в а́ли экспре́сс и на ави́то
+иска́л любо́вь но нет любви́ то""", "AA"),
+
+        ("""хоте́л в камо́рку я зайти́ но
+чу́ та́м струга́ют бурати́но""", "AA"),
+
+        ("""ба́б мно́го чи́стых и́ наи́вных
+а мы́ скоты́ суе́м хуи́ в них""", "AA"),
+
+        ("""Расскажу́ про молодё́жь
+        Не хоте́лось бы, но всё́ ж
+        Гра́мот о́трок не чита́ет
+        А уда́рился в балдё́ж""", "AABA"),
+
+        ("""я нё́с петро́ву на лине́йке
+        и у меня́ смеще́нье гры́ж
+        а ведь петро́вой говори́ли
+        не жри́ ж""", '-A-A'),
+
+        ("""я с тоско́й гляжу́ на
+        де́вушек вдали́
+        на лицо́ мне ю́ность
+        ко́льщик наколи́""", "-A-A"),
+
+        ("""я распахну́л ду́ши бушла́ты
+        но всё равно́ с други́м ушла́ ты""", "AA"),
+
+        ("""к восьмо́му ма́рта одни́ тра́ты
+        наде́юсь что́ уйдё́шь сама́ ты""", "AA"),
+
+        ("""не сто́ль криво́й была́ судьба́ бы
+        когда́ бы по́нял я су́ть ба́бы""", "AA"),
+
+        ("""гле́б у жены́ проси́л поща́ды
+        ну сле́зь с меня́ свари́ борща́ ты""", "AA"),
+
+        ("""чита́ет ста́рая ари́на
+        для арапчо́нка на фарси́
+        перевели́сь богатыри́ на
+        руси́""", "ABAB"),
+
+        ("""ни желтизна́ зубо́в ни ба́с и
+        ни даже чё́рные усы́
+        зухру́ весно́й смуща́ли то́лько
+        весы́""", "-A-A"),
+
+        ("""Скала́. Хребе́т. Гора́. Или утё́с
+        Не вертика́ль. Но всё́ же о́чень кру́то
+        Како́й… поры́в её́ туда́ занё́с
+        Одну́. И без страхо́вки почему́-то""", "ABAB"),
+
+        ("""взя́л вместо во́дки молока́ я
+        присни́тся же хуйня́ така́я""", "AA"),
+
+        ("""два́ па́рных отыска́л носка́ я
+        встреча́й краса́вчика тверска́я""", "AA"),
+
+        ("""сня́ть се́лфи с ка́мнем на мосту́ ли
+        иль сто́я под крюко́м на сту́ле""", "AA"),
+
+        ("""не оттого́ ль мне одино́ко
+        что лу́к е́м только и чесно́к а""", "AA"),
+
+        ("""оле́г не дре́ль но почему́ то
+        всё вре́мя све́рлит мо́зг кому́ то""", "AA"),
+
+        ("""взя́л динами́т поджё́г фити́ль но
+        так неуме́ло инфанти́льно""", "AA"),
+
+        ("""хоть в фэ́ э́с бэ́ то вы́ могли́ бы
+        не говори́ть что мы́ тали́бы""", "AA"),
+
+        ("""лежа́т на кла́дбище не те́ ли
+        чей ду́х бы́л здра́в в здоро́вом те́ле""", "AA"),
+
+        ("""лети́т аню́та с парашю́том
+        а не́т без парашю́та тьфу́ ты""", "AA"),
+
+        ("""мы собира́лись плы́ть к вега́нам
+        но ку́к сказа́л а нафига́ нам""", "AA"),
+
+        ("""я ебану́л тебя́ весло́м бы
+        но зна́ю дороги́е пло́мбы""", "AA"),
+
+        ("""от вымира́нья ми́р спаса́я
+        творю́ в посте́ли чудеса́ я""", "AA"),
+
+        ("""передаё́м приве́т ано́нам
+        а впро́чем на́до ли оно́ нам""", "AA"),
+
+        ("""люблю́ ее́ и жму́сь побли́же
+        да и прохла́дно не бали́ же""", "AA"),
+
+        ("""не в жё́ны взя́л а для заба́вы
+        на передо́к окса́н слаба́ вы""", "AA"),
+
+        ("""бетхо́вен от насто́йки клю́квы
+        и ба́ха спро́сит а не глю́к вы""", "AA"),
+
+        ("""о всемогу́щий си́лы да́й нам
+        в борьбе́ с засте́ночным раммшта́йном""", "AA"),
+
+        ("""Но, уже́ тоску́я
+        В ро́т тебя́ кладу́ я
+        Так пробле́мы не́т
+        Ста́л я людое́д""", "AABB"),
+
+        ("""топоро́м не на́до
+        балова́ть в лесу́
+        заруби́л себе́ я
+        э́то на носу́""", "-A-A"),
+
+        ("""о граждани́н спи́рт пью́щий кто́ ты
+исто́чник ра́дости ль иль рво́ты""", "AA"),
+
+        ("""и заче́м вчера́ я
+        вле́зла в э́тот спо́р
+        на́до перепря́тать
+        тру́пы и топо́р""", "-A-A"),
+
+        ("""дре́ль изоле́нту пассати́жи
+        отло́жь ма́ш с му́жем накати́ же""", "AA"),
+
+        ("""гле́б закупи́л побо́льше брю́та
+        с него́ изя́щнее хрю́ хрю́ то""", "AA"),
+
+        ("""хоте́л взя́ть льго́тные креди́ты
+        сказа́ли на́хуй мол иди́ ты""", "AA"),
+
+        ("""жи́знь пролети́т мы все умре́м на
+        и кто кути́л и кто жи́л скро́мно""", "AA"),
+
+        ("""не понима́ю нихера́ я
+        заче́м бо́х за́пер две́ри ра́я""", "AA"),
+
+        ("""а на пове́стке дня́ две́ те́мы
+        бюдже́т и почему́ в пизде́ мы""", "AA"),
+
+        ("""вам спря́тать удало́сь в трико́ то
+        ча́сть ту́ши ни́же антреко́та""", "AA"),
+
+        ("""чте́ц что то мя́млил нам фальце́том
+        так и не по́нял что в конце́ там""", "AA"),
+
+        ("""гле́б пиздану́лся с эвере́ста
+        у на́с вопро́с заче́м поле́з то""", "AA"),
+
+        ("""Я сра́зу осозна́л, что встре́тились не зря́ мы
+        И вско́ре сбы́лось всё, о чём мечта́л
+        Дово́льно ско́ро я к жилью́ прекра́сной да́мы
+        Доро́жку вечера́ми протопта́л""", "ABAB"),
 
         #("""мы вме́сте с тобо́й занима́лись цигу́н
         # и вме́сте ходи́ли на йо́гу
