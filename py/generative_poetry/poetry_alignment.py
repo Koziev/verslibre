@@ -668,12 +668,13 @@ class PoetryLine(object):
             # В строке возможно присутствует одно из особых словосочетаний длиной 2
             add_variants = []
             for colloc in aligner.collocations:
-                for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
-                    if colloc.hit2(w1, w2):
-                        # из всех вариантов в variants делаем еще по 1 варианту
-                        for variant in variants:
-                            v = colloc.produce_stressed_line(variant, aligner)
-                            add_variants.append(v)
+                if len(colloc) == 2:
+                    for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
+                        if colloc.hit2(w1, w2):
+                            # из всех вариантов в variants делаем еще по 1 варианту
+                            for variant in variants:
+                                v = colloc.produce_stressed_line(variant, aligner)
+                                add_variants.append(v)
 
             if add_variants:
                 variants.extend(add_variants)
@@ -1867,6 +1868,16 @@ if __name__ == '__main__':
         И вско́ре сбы́лось всё, о чём мечта́л
         Дово́льно ско́ро я к жилью́ прекра́сной да́мы
         Доро́жку вечера́ми протопта́л""", "ABAB"),
+
+        ("""не бу́дь у ба́нь и у кофе́ен
+        пиаротде́лов и прессслу́жб
+        мы все б завши́вели и пи́ли
+        из лу́ж б""", "-A-A"),
+
+        ("""по суперма́ркету с теле́жкой
+        броди́ла же́нщина сукку́б
+        и донима́ла консульта́нтов
+        муку́ б""", "-A-A"),
 
         #("""мы вме́сте с тобо́й занима́лись цигу́н
         # и вме́сте ходи́ли на йо́гу
