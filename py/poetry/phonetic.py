@@ -6,6 +6,7 @@
 19.05.2022 Добавлено автоисправление некоторых орфографических ошибок типа "тишына", "стесняцца"
 07.06.2022 Добавлено автоисправление децкий ==> детский
 02.08.2022 Исправление опечатки - твердый знак вместо мягкого "пъянки"
+11.08.2022 Добавлена продуктивная приставка "супер-"
 """
 
 import json
@@ -138,12 +139,12 @@ class Accents:
                             if all_words is None or word in all_words:
                                 if '\'' in form:
                                     accent_pos = form.index('\'')
-                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos])
+                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)
                                     if word not in self.word_accents_dict:
                                         self.word_accents_dict[word] = nb_vowels_before
                                 elif 'ё' in form:
                                     accent_pos = form.index('ё')
-                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos])+1
+                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)+1
                                     if word not in self.word_accents_dict:
                                         self.word_accents_dict[word] = nb_vowels_before
 
@@ -161,17 +162,17 @@ class Accents:
                         if len(nword) > 2:
                             if stress_char in word:
                                 accent_pos = word.index(stress_char)
-                                nb_vowels_before = self.get_vowel_count(word[:accent_pos])
+                                nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False)
                                 if nword not in self.word_accents_dict:
                                     self.word_accents_dict[nword] = nb_vowels_before
                             elif '\'' in word:
                                 accent_pos = word.index('\'')
-                                nb_vowels_before = self.get_vowel_count(word[:accent_pos])
+                                nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False)
                                 if nword not in self.word_accents_dict:
                                     self.word_accents_dict[nword] = nb_vowels_before
                             elif 'ё' in word:
                                 accent_pos = word.index('ё')
-                                nb_vowels_before = self.get_vowel_count(word[:accent_pos])
+                                nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False)
                                 if nword not in self.word_accents_dict:
                                     self.word_accents_dict[nword] = nb_vowels_before
 
@@ -270,6 +271,9 @@ class Accents:
         return self.pronounce(self.yoficate(word))
 
     def pronounce(self, s):
+        if s is None or len(s) == 0:
+            return ''
+
         # Фонетическая транскрипция фрагмента слова, НАЧИНАЯ С УДАРНОЙ ГЛАСНОЙ
         #                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
         if s.endswith('жь'):
@@ -340,7 +344,7 @@ class Accents:
         if len(s) >= 2 and s[-1] == 'ь' and s[-2] in 'бвгдз':
             s = s[:-2] + self.conson(s[-2]) + 'ь'
 
-        if self.get_vowel_count(s) > 1:
+        if self.get_vowel_count(s, abbrevs=False) > 1:
             for ic, c in enumerate(s):
                 if c in "уеыаоэёяию":
                     # нашли первую, ударную гласную
@@ -444,7 +448,7 @@ class Accents:
 
         # получили индекс символа с ударением.
         # нам надо посчитать гласные слева (включая ударную).
-        nprev = self.get_vowel_count(word[:i])
+        nprev = self.get_vowel_count(word[:i], abbrevs=False)
         accent = nprev + 1
         self.predicted_accents[word] = accent
         return accent
@@ -499,6 +503,7 @@ class Accents:
         # Попробуем скорректировать такие ошибки.
         corrections = [('шы', 'ши'), ('жы', 'жи'), ('цы', 'ци'), ('щю', 'щу'), ('чю', 'чу'), ('цца', 'ться'),
                        ('ща', 'сча'), ('цэ', 'це'), ('жо', 'жё'), ('шо', 'шё'), ('чо', 'чё'), ('́чьк', 'чк'),
+                       ('що', 'щё'),  # вощоный
                        ('щьк', 'щк'),
                        ('цк', 'тск'),  # 07.06.2022 децкий ==> детский
                        ('цца', 'тся'),  # 04.08.2022 "льюцца"
@@ -559,16 +564,16 @@ class Accents:
         # фиксированное ударение.
         pos1 = word.find('ейш') # сильнейший, наимудрейшие
         if pos1 != -1:
-            stress_pos = self.get_vowel_count(word[:pos1]) + 1
+            stress_pos = self.get_vowel_count(word[:pos1], abbrevs=False) + 1
             return stress_pos
 
         # Есть продуктивные приставки типа АНТИ или НЕ
-        for prefix in 'спец сверх недо анти полу электро магнито не прото микро макро нано квази само слабо одно двух трех четырех пяти шести семи восьми девяти десяти одиннадцати двенадцати тринадцати четырнадцати пятнадцати шестнадцати семнадцати восемнадцати девятнадцати двадцати тридцами сорока пятидесяти шестидесяти семидесяти восьмидесяти девяносто сто тысяче'.split():
+        for prefix in 'спец сверх недо анти полу электро магнито не прото микро макро нано квази само слабо одно двух трех четырех пяти шести семи восьми девяти десяти одиннадцати двенадцати тринадцати четырнадцати пятнадцати шестнадцати семнадцати восемнадцати девятнадцати двадцати тридцами сорока пятидесяти шестидесяти семидесяти восьмидесяти девяносто сто тысяче супер'.split():
             if word.startswith(prefix):
                 word1 = word[len(prefix):]  # отсекаем приставку
                 if len(word1) > 2:  # нас интересуют составные слова
                     if word1 in self.word_accents_dict:
-                        return self.get_vowel_count(prefix) + self.word_accents_dict[word1]
+                        return self.get_vowel_count(prefix, abbrevs=False) + self.word_accents_dict[word1]
 
         # Иногда можно взять ударение из стема: "ПОЗИТРОННЫЙ" -> "ПОЗИТРОН"
         if False:
@@ -595,7 +600,7 @@ class Accents:
         word = self.sanitize_word(word)
 
         word_end = word[-3:]
-        vowel_count = self.get_vowel_count(word)
+        vowel_count = self.get_vowel_count(word, abbrevs=False)
         accent = self.get_accent(word)
 
         return word_end, vowel_count, accent
@@ -831,6 +836,15 @@ def transcript_unstressed(chars):
 
     if phonems[-1] == 'ж':
         phonems[-1] = 'ш'
+    if phonems[-1] == 'в':
+        phonems[-1] = 'ф'
+    elif phonems[-1] == 'б':
+        # оглушение частицы "б"
+        # не бу́дь у ба́нь и у кофе́ен
+        # пиаротде́лов и прессслу́жб    <=====
+        # мы все б завши́вели и пи́ли
+        # из лу́ж б                    <=====
+        phonems[-1] = 'п'
 
     res = ''.join(phonems)
     return res
@@ -838,11 +852,12 @@ def transcript_unstressed(chars):
 
 
 
-def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags, unstressed_tail):
-    unstressed_tail_transcription = transcript_unstressed(unstressed_tail)
+def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags, unstressed_prefix, unstressed_tail):
+    unstressed_prefix_transcription = accents.pronounce(unstressed_prefix)  # transcript_unstressed(unstressed_prefix)
+    unstressed_tail_transcription = accents.pronounce(unstressed_tail)  #transcript_unstressed(unstressed_tail)
 
     if len(word) == 1:
-        return word + unstressed_tail_transcription
+        return unstressed_prefix_transcription + word + unstressed_tail_transcription
 
     ending = None
     v_counter = 0
@@ -914,7 +929,7 @@ def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags, un
     if ending.startswith('ё'):
         ending = 'о' + ending[1:]
 
-    return ending + unstressed_tail_transcription
+    return unstressed_prefix_transcription + ending + unstressed_tail_transcription
 
 
 def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
@@ -940,15 +955,15 @@ def rhymed(accents, word1, ud_tags1, word2, ud_tags2):
             return word1.endswith('я')
 
         # Теперь все буквы, начиная с ударной гласной
-        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1, '')
-        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2, '')
+        ending1 = extract_ending_prononciation_after_stress(accents, word1, stress1, ud_tags1, '', '')
+        ending2 = extract_ending_prononciation_after_stress(accents, word2, stress2, ud_tags2, '', '')
 
         return are_phonetically_equal(ending1, ending2)
 
     return False
 
 
-def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_tail2):
+def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_prefix2, unstressed_tail2):
     word1 = accentuator.yoficate(accentuator.sanitize_word(word1))
     word2 = accentuator.yoficate(accentuator.sanitize_word(word2))
 
@@ -957,10 +972,10 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stre
             return True
 
     vow_count1 = accentuator.get_vowel_count(word1)
-    pos1 = vow_count1 - stress1 + accentuator.get_vowel_count(unstressed_tail1)
+    pos1 = vow_count1 - stress1 + accentuator.get_vowel_count(unstressed_tail1, abbrevs=False)
 
     vow_count2 = accentuator.get_vowel_count(word2)
-    pos2 = vow_count2 - stress2 + accentuator.get_vowel_count(unstressed_tail2)
+    pos2 = vow_count2 - stress2 + accentuator.get_vowel_count(unstressed_tail2, abbrevs=False)
 
     # смещение ударной гласной от конца слова должно быть одно и то же
     # для проверяемых слов.
@@ -974,8 +989,8 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stre
             return True
 
         # Получаем клаузулы - все буквы, начиная с ударной гласной
-        ending1 = extract_ending_prononciation_after_stress(accentuator, word1, stress1, ud_tags1, unstressed_tail1)
-        ending2 = extract_ending_prononciation_after_stress(accentuator, word2, stress2, ud_tags2, unstressed_tail2)
+        ending1 = extract_ending_prononciation_after_stress(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstressed_tail1)
+        ending2 = extract_ending_prononciation_after_stress(accentuator, word2, stress2, ud_tags2, unstressed_prefix2, unstressed_tail2)
 
         # Фонетическое сравнение клаузул.
         return are_phonetically_equal(ending1, ending2)
@@ -1079,7 +1094,8 @@ def check_ending_rx_matching_2(word1, word2, s1, s2):
         return False
 
 
-def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_tail):
+def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_prefix, unstressed_tail):
+    unstressed_prefix_transcript = transcript_unstressed(unstressed_prefix)
     unstressed_tail_transcript = transcript_unstressed(unstressed_tail)
 
     phonems = []
@@ -1190,7 +1206,7 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_tail):
     if len(phonems) > 2 and phonems[-1] == 'ь' and phonems[-2] in 'шч':  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ", РОЖЬ, МЫШЬ
         phonems = phonems[:-1]
 
-    xword = ''.join(phonems) + unstressed_tail_transcript
+    xword = unstressed_prefix_transcript + ''.join(phonems) + unstressed_tail_transcript
     #xword = accentuator.pronounce(xword)
 
     # СОЛНЦЕ -> СОНЦЕ
@@ -1266,18 +1282,18 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_tail):
 
 
 def rhymed_fuzzy(accentuator, word1, stress1, ud_tags1, word2, stress2, ud_tags2):
-    return rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, None, word2, stress2, ud_tags2, None)
+    return rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, '', None, word2, stress2, ud_tags2, '', None)
 
 
-def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_tail2):
+def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstressed_tail1, word2, stress2, ud_tags2, unstressed_prefix2, unstressed_tail2):
     if stress1 is None:
         stress1 = accentuator.get_accent(word1, ud_tags1)
 
     if stress2 is None:
         stress2 = accentuator.get_accent(word2, ud_tags2)
 
-    xword1, clausula1 = render_xword(accentuator, word1, stress1, ud_tags1, unstressed_tail1)
-    xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2, unstressed_tail2)
+    xword1, clausula1 = render_xword(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstressed_tail1)
+    xword2, clausula2 = render_xword(accentuator, word2, stress2, ud_tags2, unstressed_prefix2, unstressed_tail2)
 
     if len(clausula1) >= 3 and clausula1 == clausula2:
         # клаузуллы достаточно длинные и совпадают:
@@ -1493,7 +1509,7 @@ if __name__ == '__main__':
              'трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split() +\
              'крУтиш знАеш смОжеш льЮцца бъЕтся грУсный брАццы прЯчте блЕщщут щщУпать Эхооооо мчИцца рвЕтьса сссУка клАвишь'.split() +\
              'плОтьник щщенкИ скрЫтьса стрАсно сьЕли дмИтрий дмИттрий льЮцца спрЯчте свЕточь здАчу гнУтса'.split() +\
-             'швАбрщик сберЕч встрЕтимса трИццать щщАстья'.split()
+             'швАбрщик сберЕч встрЕтимса трИццать щщАстья вощОный суперрУку'.split()
     for word in xwords:
         n_vowels = 0
         true_stress = -1
