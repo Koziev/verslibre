@@ -18,12 +18,14 @@
 
 import collections
 import itertools
+import traceback
 from functools import reduce
 import os
 import io
 import math
 import jellyfish
 import re
+from typing import List, Set, Dict, Tuple, Optional
 
 from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy2
 from generative_poetry.udpipe_parser import UdpipeParser
@@ -44,6 +46,152 @@ COEFF['@79'] = 1.0
 COEFF['@126'] = 0.98
 COEFF['@225'] = 0.95
 COEFF['@143'] = 0.9
+
+
+def mul(items):
+    return reduce((lambda x, y: x * y), items)
+
+
+class MetreMappingResult(object):
+    def __init__(self, line_stress_variant):
+        self.src_line_variant_score = line_stress_variant.get_score()
+        self.score = 1.0
+        self.word_mappings = []
+        self.stress_shift_count = 0
+
+    def add_word_mapping(self, word_mapping):
+        self.word_mappings.append(word_mapping)
+        self.score *= word_mapping.get_total_score()
+        if word_mapping.stress_shift:
+            self.stress_shift_count += 1
+
+    def __repr__(self):
+        sx = []
+
+        for word_mapping in self.word_mappings:
+            sx.append(str(word_mapping))
+
+        sx.append('[{:6.2g}]'.format(self.score))
+
+        return ' '.join(sx)
+
+    def get_score(self):
+        stress_shift_factor = 1.0 if self.stress_shift_count < 2 else pow(0.5, self.stress_shift_count)
+        return self.score * stress_shift_factor * self.src_line_variant_score
+
+
+class WordMappingResult(object):
+    def __init__(self, word, TP, FP, TN, FN, stress_shift):
+        self.word = word
+        self.TP = TP
+        self.FP = FP
+        self.TN = TN
+        self.FN = FN
+        self.metre_score = pow(0.1, FP) * pow(0.95, FN)
+        self.total_score = self.metre_score   # word.get_score() *
+        self.stress_shift = stress_shift
+
+    def get_total_score(self):
+        return self.total_score
+
+    def __repr__(self):
+        return self.word.get_stressed_form() + '[{:5.2g}]'.format(self.total_score)
+
+
+class MetreMappingCursor(object):
+    def __init__(self, metre_signature: List[int], prefix: int, allow_stress_shift: bool):
+        self.prefix = prefix
+        self.metre_signature = metre_signature
+        self.length = len(metre_signature)
+        self.cursor = 0
+        self.allow_stress_shift = allow_stress_shift
+
+    def get_stress(self) -> int:
+        """Возвращает ударность, ожидаемую в текущей позиции"""
+        if self.prefix:
+            if self.cursor == 0:
+                return 0
+            else:
+                return self.metre_signature[(self.cursor - self.prefix) % self.length]
+        else:
+            return self.metre_signature[self.cursor % self.length]
+
+    def map(self, line_stress_variant, aligner) -> MetreMappingResult:
+        result = MetreMappingResult(line_stress_variant)
+        for word in line_stress_variant.stressed_words:
+            self.map_word(word, result, aligner)
+        return result
+
+    def map_word(self, stressed_word, result: MetreMappingResult, aligner):
+        prev_cursor = self.cursor
+        TP, FP, TN, FN = 0, 0, 0, 0
+        for word_sign in stressed_word.stress_signature:
+            metre_sign = self.get_stress()
+            if metre_sign:
+                if word_sign:
+                    # Ударение должно быть и оно есть
+                    TP += 1
+                else:
+                    # ударение должно быть, но его нет
+                    FN += 1
+            else:
+                if word_sign:
+                    # Ударения не должно быть, но оно есть
+                    FP += 1
+                else:
+                    # Ударения не должно быть, и его нет
+                    TN += 1
+            self.cursor += 1
+        best_score = -(FP*2 + FN)
+        best_mapping = WordMappingResult(stressed_word, TP, FP, TN, FN, False)
+
+        if self.allow_stress_shift:
+            if FN > 0 and FP > 0 and TP == 0:
+                uform = stressed_word.poetry_word.form.lower()
+                if count_vowels(uform) > 1 and uform in aligner.accentuator.ambiguous_accents and uform not in aligner.accentuator.ambiguous_accents2:
+                    # Можем попробовать взять другой вариант ударности слова, считая,
+                    # что имеем дело с ошибкой частеречной разметки.
+                    sx = list(aligner.accentuator.ambiguous_accents[uform].keys())
+                    for stress_form in sx:
+                        stress_pos = -1
+                        n_vowels = 0
+                        for c in stress_form:
+                            if c.lower() in 'уеыаоэёяию':
+                                n_vowels += 1
+
+                            if c in 'АЕЁИОУЫЭЮЯ':
+                                stress_pos = n_vowels
+                                break
+                        if stress_pos != stressed_word.new_stress_pos:
+                            # Нашли новый вариант ударности этого слова.
+                            # Попробуем использовать его вместо выбранного с помощью частеречной разметки.
+                            new_stressed_word = WordStressVariant(stressed_word.poetry_word, stress_pos, stressed_word.get_score())
+                            self.cursor = prev_cursor
+
+                            TP, FP, TN, FN = 0, 0, 0, 0
+                            for word_sign in new_stressed_word.stress_signature:
+                                metre_sign = self.get_stress()
+                                if metre_sign:
+                                    if word_sign:
+                                        # Ударение должно быть и оно есть
+                                        TP += 1
+                                    else:
+                                        # ударение должно быть, но его нет
+                                        FN += 1
+                                else:
+                                    if word_sign:
+                                        # Ударения не должно быть, но оно есть
+                                        FP += 1
+                                    else:
+                                        # Ударения не должно быть, и его нет
+                                        TN += 1
+                                self.cursor += 1
+                            score = -(FP * 2 + FN)
+                            if score > best_score:
+                                best_score = score
+                                best_mapping = WordMappingResult(new_stressed_word, TP, FP, TN, FN, True)
+
+        result.add_word_mapping(best_mapping)
 
 
 class WordStressVariant(object):
@@ -67,6 +215,9 @@ class WordStressVariant(object):
 
         self.is_cyrillic = self.poetry_word.form[0].lower() in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'
         self.stressed_form = ''.join(output)
+
+    def get_score(self):
+        return self.score
 
     @property
     def form(self):
@@ -202,6 +353,15 @@ class PoetryWord(object):
             # Мо́жет что́ - нибу́дь напла́чу
             #             ~~~~~~
             variants.append(WordStressVariant(self, -1, 1.0))
+
+        elif nvowels == 1 and self.upos in ('NOUN', 'NUM'):
+            # Односложные слова типа "год" или "два" могут стать безударными:
+            # В год Петуха́ учи́тесь кукаре́кать.
+            #   ^^^
+            # Оле́г два дня́ прожи́л без во́дки.
+            #      ^^^
+            variants.append(WordStressVariant(self, self.stress_pos, 1.0))
+            variants.append(WordStressVariant(self, -1, 0.7))
         elif uform == 'нет':  # and not self.is_rhyming_word:
             # частицу (или глагол для Stanza) "нет" с ударением штрафуем
             variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
@@ -209,7 +369,7 @@ class PoetryWord(object):
             # а вариант без ударения - с нормальным скором:
             variants.append(WordStressVariant(self, -1, COEFF['@71']))
         elif self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ'): # and not self.is_rhyming_word:
-            if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во', 'на') and self.upos == 'ADP':
+            if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во', 'на', 'по') and self.upos == 'ADP':
                 # эти предлоги никогда не делаем ударными
                 variants.append(WordStressVariant(self, -1, 1.0))
 
@@ -219,8 +379,8 @@ class PoetryWord(object):
                 # не так вредна́ в проце́ссе дра́ки
                 # как до
                 if self.is_rhyming_word:
-                    variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
-            elif uform in ('не', 'бы', 'ли', 'же'):
+                    variants.append(WordStressVariant(self, self.stress_pos, 1.0))  # COEFF['@68']
+            elif uform in ('не', 'бы', 'ли', 'же', 'ни', 'ка'):
                 # Частицы "не" и др. никогда не делаем ударной
                 variants.append(WordStressVariant(self, -1, 1.0))
 
@@ -247,23 +407,27 @@ class PoetryWord(object):
                 # Предлоги без единой гласной типа "в"
                 variants.append(WordStressVariant(self, -1, 1.0))
             else:
-                # Предлоги, союзы, частицы предпочитаем без ударения,
-                # поэтому базовый вариант добавляем с дисконтом:
-                if uform in ['лишь', 'вроде', 'если', 'чтобы', 'когда', 'просто', 'мимо', 'даже', 'всё', 'хотя', 'едва', 'нет', 'пока']:
-                    variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
-                else:
-                    variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
+                if count_vowels(uform) < 3:
+                    # Предлоги, союзы, частицы предпочитаем без ударения, если в них меньше трех гласных.
+                    # поэтому базовый вариант добавляем с дисконтом:
+                    if uform in ['лишь', 'вроде', 'если', 'чтобы', 'когда', 'просто', 'мимо', 'даже', 'всё', 'хотя', 'едва', 'нет', 'пока']:
+                        variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68_2']))
+                    else:
+                        variants.append(WordStressVariant(self, self.stress_pos, COEFF['@68']))
 
-                # а вариант без ударения - с нормальным скором:
-                #if not self.is_rhyming_word:
-                variants.append(WordStressVariant(self, -1, COEFF['@71']))
+                    # а вариант без ударения - с нормальным скором:
+                    #if not self.is_rhyming_word:
+                    variants.append(WordStressVariant(self, -1, COEFF['@71']))
+                else:
+                    # Частицы типа "НЕУЖЕЛИ" с 3 и более гласными
+                    variants.append(WordStressVariant(self, self.stress_pos, 1.0))
         elif self.upos in ('PRON', 'ADV', 'DET'):
             # Для односложных местоимений (Я), наречий (ТУТ, ГДЕ) и слов типа МОЙ, ВСЯ, если они не последние в строке,
             # добавляем вариант без ударения с дисконтом.
             if nvowels == 1:
-                variants.append(WordStressVariant(self, self.stress_pos, COEFF['@75']))
+                variants.append(WordStressVariant(self, self.stress_pos, 1.0))  # COEFF['@75']
                 # вариант без ударения
-                variants.append(WordStressVariant(self, -1, COEFF['@77']))
+                variants.append(WordStressVariant(self, -1, 1.0))  # COEFF['@77']
             else:
                 if uform in ['эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей',
                              'мою', 'твою', 'его', 'ее', 'её', 'себе', 'меня', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
@@ -394,9 +558,10 @@ class LineStressVariant(object):
                 # я́ ж ведь не распла́чусь
                 #   ^^^^^^^^^
                 # Такие цепочки не штрафуем.
-                if count_vowels(word1.poetry_word.form) > 0 and count_vowels(word2.poetry_word.form) > 0 and count_vowels(word3.poetry_word.form) > 0:
-                    self.total_score *= 0.1
-                    self.penalties.append('@323')
+                #if count_vowels(word1.poetry_word.form) > 0 and count_vowels(word2.poetry_word.form) > 0 and count_vowels(word3.poetry_word.form) > 0:
+                #    self.total_score *= 0.1
+                #    self.penalties.append('@323')
+                pass
 
         # 28-12-2021 штрафуем за подряд идущие короткие слова (1-2 буквы)
         #for word1, word2, word3 in zip(stressed_words, stressed_words[1:], stressed_words[2:]):
@@ -404,13 +569,14 @@ class LineStressVariant(object):
         #        self.total_score *= 0.2
 
         if sum(self.stress_signature) == 1:
-            # Всего один ударный слог в строке... Очень странно.
+            # Всего один ударный слог в строке с > 2 слогов... Очень странно.
             # 〚Что за недоразуме́нье〛
             # 00000010
             # 07.06.2022 Но если в строке всего одно слово или группа предлог+сущ - это нормально!
             if len(self.poetry_line.pwords) > 2 or (len(self.poetry_line.pwords) == 2 and self.poetry_line.pwords[-2].upos != 'ADP'):
-                self.total_score *= 0.1
-                self.penalties.append('@335')
+                if sum(count_vowels(w.poetry_word.form) for w in self.stressed_words) > 2:
+                    self.total_score *= 0.1
+                    self.penalties.append('@335')
         else:
             # 01-01-2022 Детектируем разные сбои ритма
             #if self.stress_signature_str in aligner.bad_signature1:
@@ -717,8 +883,8 @@ class PoetryLine(object):
         lwords = [w.form.lower() for w in self.pwords]
         if any((w in aligner.collocation2_first) for w in lwords) and any((w in aligner.collocation2_second) for w in lwords):
             # В строке возможно присутствует одно из особых словосочетаний длиной 2
-            add_variants = []
             for colloc in aligner.collocations:
+                add_variants = []
                 if len(colloc) == 2:
                     for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
                         if colloc.hit2(w1, w2):
@@ -727,8 +893,8 @@ class PoetryLine(object):
                                 v = colloc.produce_stressed_line(variant, aligner)
                                 add_variants.append(v)
 
-            if add_variants:
-                variants.extend(add_variants)
+                if add_variants:
+                    variants.extend(add_variants)
 
         # 04-08-2022 добавляем варианты для триграмм типа "бок О бок"
         if any((w in aligner.collocation3_first) for w in lwords) and any((w in aligner.collocation3_second) for w in lwords) and any((w in aligner.collocation3_third) for w in lwords):
@@ -933,32 +1099,6 @@ class PoetryStressAligner(object):
 
                         self.bad_signature1.add(pattern)
 
-        self.bad_alignments2 = set()
-        with io.open(os.path.join(data_dir, 'bad_alignment2.dat'), 'r', encoding='utf-8') as rdr:
-            pattern_lines = []
-            for line in rdr:
-                s = line.strip()
-                if s:
-                    if s[0] == '#':
-                        continue
-                    else:
-                        pattern_lines.append(s)
-                else:
-                    if len(pattern_lines) == 2:
-                        for pattern1 in pattern_lines[0].split(','):
-                            pattern1 = pattern1.strip()
-                            if pattern1[0] == "'" and pattern1[-1] == "'":
-                                pattern1 = pattern1[1:-1]
-                            for pattern2 in pattern_lines[1].split(','):
-                                pattern2 = pattern2.strip()
-                                if pattern2[0] == "'" and pattern2[-1] == "'":
-                                    pattern2 = pattern2[1:-1]
-
-                                self.bad_alignments2.add((pattern1, pattern2))
-                    elif len(pattern_lines) != 0:
-                        raise RuntimeError()
-
-                    pattern_lines = []
         self.allow_fuzzy_rhyming = True
 
     def map_meter(self, signature, lines):
@@ -1012,8 +1152,8 @@ class PoetryStressAligner(object):
         #spectrum2 = self.get_spectrum(sline2)
 
         # 01-01-2022 Разные корявые рифмовки детектируем по словарю сигнатур.
-        if (sline1.stress_signature_str, sline2.stress_signature_str) in self.bad_alignments2:
-            score *= 0.1
+        #if (sline1.stress_signature_str, sline2.stress_signature_str) in self.bad_alignments2:
+        #    score *= 0.1
 
         return score
 
@@ -1067,11 +1207,11 @@ class PoetryStressAligner(object):
         return False
 
     def _align_line_group(self, metre_signature, lines):
-        line1 = lines[0]
-        for line2 in lines[1:]:
-            if (line1.stress_signature_str, line2.stress_signature_str) in self.bad_alignments2:
-                # Отсеиваем заведомо несопоставимые пары
-                return 0.0
+        #line1 = lines[0]
+        #for line2 in lines[1:]:
+        #    if (line1.stress_signature_str, line2.stress_signature_str) in self.bad_alignments2:
+        #        # Отсеиваем заведомо несопоставимые пары
+        #        return 0.0
         score = self.map_meter(metre_signature, lines)
         return score
 
@@ -1132,7 +1272,7 @@ class PoetryStressAligner(object):
         else:
             return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
 
-    def align4(self, lines, check_rhymes):
+    def align4_old(self, lines, check_rhymes):
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
 
         # Список вариантов простановки ударения с учётом опциональности ударений для союзов, предлогов и т.д.
@@ -1252,7 +1392,7 @@ class PoetryStressAligner(object):
         # Возвращаем найденный вариант разметки и его оценку
         return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
 
-    def align2(self, lines, check_rhymes):
+    def align2_old(self, lines, check_rhymes):
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
         plinevx = [pline.get_stress_variants(self) for pline in plines]
 
@@ -1303,33 +1443,212 @@ class PoetryStressAligner(object):
         return PoetryAlignment(best_variant, best_score, best_meter, rhyme_scheme=best_rhyme_scheme)
 
     def align1(self, lines):
-        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
-        plinevx = [pline.get_stress_variants(self) for pline in plines]
+        pline1 = PoetryLine.build(lines[0], self.udpipe, self.accentuator)
+        sline1x = pline1.get_stress_variants(self)
 
-        # Идем по списку вариантов, отображаем на эталонные метры и ищем лучший вариант.
-        best_variant = None
         best_score = 0.0
-        best_meter = None
-        best_ivar = None
+        best_metre_name = None
+        best_mapping = None
+        best_variant = None
+        for allow_stress_shift in [False, True]:
+            for metre_name, metre_signature in meters:
+                for ivar, sline1 in enumerate(sline1x):
+                    cursor = MetreMappingCursor(metre_signature, prefix=0, allow_stress_shift=allow_stress_shift)
+                    metre_mapping = cursor.map(sline1, self)
+                    if metre_mapping.get_score() > best_score:
+                        best_score = metre_mapping.get_score()
+                        best_metre_name = metre_name
+                        best_mapping = metre_mapping
+                        best_variant = [sline1]
 
-        vvx = list(itertools.product(*plinevx))
-        if len(vvx) > 10000:
-            raise ValueError('Too many optional stresses: {}'.format(len(vvx)))
-
-        for ivar, plinev in enumerate(vvx):
-            # plinev это набор из двух экземпляров LineStressVariant.
-
-            # Ищем лучшее отображение метра.
-            mapped_meter, mapping_score = self.map_meters(plinev)
-            score = mapping_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-            if score > best_score:
-                best_variant = plinev
-                best_score = score
-                best_meter = mapped_meter
-                best_ivar = ivar
+            if best_score > 0.1:
+                break
 
         # Возвращаем найденный вариант разметки и его оценку
-        return PoetryAlignment(best_variant, best_score, best_meter, rhyme_scheme='')
+        if best_mapping.stress_shift_count > 0:
+            # Надо перестроить вариант ударности строки, так как мы выполнили минимум одно перемещение ударения.
+            stressed_words = [m.word for m in best_mapping.word_mappings]
+            new_stress_line = LineStressVariant(pline1, stressed_words, self)
+            best_variant = [new_stress_line]
+
+        return PoetryAlignment(best_variant, best_score, best_metre_name, rhyme_scheme='')
+
+    def align2(self, lines, check_rhymes):
+        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+        stressed_lines = [pline.get_stress_variants(self) for pline in plines]
+
+        best_score = 0.0
+        best_metre = None
+        best_rhyme_scheme = None
+        best_variant = None
+
+        for allow_stress_shift in [False, True]:
+            # Для каждой строки перебираем варианты разметки и оставляем по 2 варианта в каждом метре.
+            for metre_name, metre_signature in meters:
+                best_scores = dict()
+
+                # В каждой строке перебираем варианты расстановки ударений.
+                for ipline, (pline, slines) in enumerate(zip(plines, stressed_lines)):
+                    best_scores[ipline] = dict()
+
+                    for ivar, sline in enumerate(slines):
+                        for prefix in [0, 1]:
+                            cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=allow_stress_shift)
+                            metre_mapping = cursor.map(sline, self)
+
+                            if metre_mapping.stress_shift_count > 0:
+                                stressed_words = [m.word for m in metre_mapping.word_mappings]
+                                new_stress_line = LineStressVariant(pline, stressed_words, self)
+                            else:
+                                new_stress_line = sline
+
+                            if new_stress_line.get_rhyming_tail().is_ok():
+                                tail_str = new_stress_line.get_rhyming_tail().__repr__()
+                                score = metre_mapping.get_score()
+                                if tail_str not in best_scores[ipline]:
+                                    prev_score = -1e3
+                                else:
+                                    prev_score = best_scores[ipline][tail_str][0].get_score()
+                                if score > prev_score:
+                                    best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
+
+                # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
+                # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
+                stressed_lines2 = [list() for _ in range(2)]
+                for iline, items2 in best_scores.items():
+                    stressed_lines2[iline].extend(items2.values())
+
+                vvx = list(itertools.product(*stressed_lines2))
+                for ivar, plinev in enumerate(vvx):
+                    # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
+
+                    # Определяем рифмуемость
+                    rhyme_scheme = None
+                    rhyme_score = 1.0
+
+                    last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
+                    if self.check_rhyming(last_pwords[0], last_pwords[1]):
+                        rhyme_scheme = 'AA'
+                    else:
+                        rhyme_scheme = '--'
+                        rhyme_score = 0.5
+
+                    total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
+                    if total_score > best_score:
+                        best_score = total_score
+                        best_metre = metre_name
+                        best_rhyme_scheme = rhyme_scheme
+                        best_variant = plinev
+
+            if best_score > 0.1:
+                break
+
+        # Возвращаем найденный вариант разметки и его оценку
+        best_lines = [v[1] for v in best_variant]
+        return PoetryAlignment(best_lines, best_score, best_metre, rhyme_scheme=best_rhyme_scheme)
+
+    def align4(self, lines, check_rhymes):
+        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+        stressed_lines = [pline.get_stress_variants(self) for pline in plines]
+
+        best_score = 0.0
+        best_metre = None
+        best_rhyme_scheme = None
+        best_variant = None
+
+        for allow_stress_shift in [False, True]:
+            # Для каждой строки перебираем варианты разметки и оставляем по ~2 варианта в каждом метре.
+            for metre_name, metre_signature in meters:
+                best_scores = dict()
+
+                # В каждой строке перебираем варианты расстановки ударений.
+                for ipline, (pline, slines) in enumerate(zip(plines, stressed_lines)):
+                    best_scores[ipline] = dict()
+
+                    for ivar, sline in enumerate(slines):
+                        for prefix in [0, 1]:
+                            cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=allow_stress_shift)
+                            metre_mapping = cursor.map(sline, self)
+
+                            if metre_mapping.stress_shift_count > 0:
+                                stressed_words = [m.word for m in metre_mapping.word_mappings]
+                                new_stress_line = LineStressVariant(pline, stressed_words, self)
+                            else:
+                                new_stress_line = sline
+
+                            if new_stress_line.get_rhyming_tail().is_ok():
+                                tail_str = new_stress_line.get_rhyming_tail().__repr__()
+                                score = metre_mapping.get_score()
+                                if tail_str not in best_scores[ipline]:
+                                    prev_score = -1e3
+                                else:
+                                    prev_score = best_scores[ipline][tail_str][0].get_score()
+                                if score > prev_score:
+                                    best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
+
+                # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
+                # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
+                stressed_lines2 = [list() for _ in range(4)]
+                for iline, items2 in best_scores.items():
+                    stressed_lines2[iline].extend(items2.values())
+
+                vvx = list(itertools.product(*stressed_lines2))
+                for ivar, plinev in enumerate(vvx):
+                    # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
+
+                    # Определяем рифмуемость
+                    rhyme_scheme = None
+                    rhyme_score = 1.0
+
+                    last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
+
+                    r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
+                    r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
+                    r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
+                    r12 = self.check_rhyming(last_pwords[1], last_pwords[2])
+                    r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
+                    r23 = self.check_rhyming(last_pwords[2], last_pwords[3])
+
+                    rhyme_score = 1.0
+                    if r01 and r12 and r23:
+                        # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
+                        # желательно устранять из обучающего датасета.
+                        rhyme_scheme = 'AAAA'
+                    elif r02 and r13:
+                        rhyme_scheme = 'ABAB'
+                    elif r03 and r12:
+                        rhyme_scheme = 'ABBA'
+                    # 22-12-2021 добавлена рифмовка AABB
+                    elif r01 and r23:
+                        rhyme_scheme = 'AABB'
+                    # 28-12-2021 добавлена рифмовка "рубаи" AABA
+                    elif r01 and r03 and not r02:
+                        rhyme_scheme = 'AABA'
+                    # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
+                    elif r02 and not r13:
+                        rhyme_scheme = 'A-A-'
+                        rhyme_score = 0.75
+                    elif not r02 and r13:
+                        rhyme_scheme = '-A-A'
+                        rhyme_score = 0.75
+                    else:
+                        rhyme_scheme = '----'
+                        rhyme_score = 0.50
+
+                    total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
+                    if total_score > best_score:
+                        best_score = total_score
+                        best_metre = metre_name
+                        best_rhyme_scheme = rhyme_scheme
+                        best_variant = plinev
+
+            if best_score > 0.1:
+                break
+
+        # Возвращаем найденный вариант разметки и его оценку
+        best_lines = [v[1] for v in best_variant]
+        return PoetryAlignment(best_lines, best_score, best_metre, rhyme_scheme=best_rhyme_scheme)
+
 
     def build_from_markup(self, text):
         lines = text.split('\n')
@@ -1339,8 +1658,45 @@ class PoetryStressAligner(object):
 
         mapped_meter, mapping_score = self.map_meters(stressed_lines)
         score = mapping_score * reduce(lambda x, y: x * y, [l.get_score() for l in stressed_lines])
+        rhyme_scheme = ''
 
-        return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme='')
+        # 13.08.2022 определяем схему рифмовки
+        if len(lines) == 2:
+            rhyme_scheme = '--'
+            claus1 = stressed_lines[0].get_rhyming_tail()
+            claus2 = stressed_lines[1].get_rhyming_tail()
+            if self.check_rhyming(claus1, claus2):
+                rhyme_scheme = 'AA'
+        elif len(lines) == 4:
+            rhyme_scheme = '----'
+            claus1 = stressed_lines[0].get_rhyming_tail()
+            claus2 = stressed_lines[1].get_rhyming_tail()
+            claus3 = stressed_lines[2].get_rhyming_tail()
+            claus4 = stressed_lines[3].get_rhyming_tail()
+
+            r12 = self.check_rhyming(claus1, claus2)
+            r13 = self.check_rhyming(claus1, claus3)
+            r14 = self.check_rhyming(claus1, claus4)
+            r23 = self.check_rhyming(claus2, claus3)
+            r24 = self.check_rhyming(claus2, claus4)
+            r34 = self.check_rhyming(claus3, claus4)
+
+            if r12 and r23 and r34:
+                rhyme_scheme = 'AAAA'
+            elif r13 and r24 and not r12 and not r34:
+                rhyme_scheme = 'ABAB'
+            elif r12 and not r23 and r34:
+                rhyme_scheme = 'AABB'
+            elif r12 and not r23 and not r23 and r14:
+                rhyme_scheme = 'AABA'
+            elif r14 and r23 and not r12 and not r34:
+                rhyme_scheme = 'ABBA'
+            elif not r12 and r13 and not r34:
+                rhyme_scheme = 'A-A-'
+            elif not r12 and r24 and not r23:
+                rhyme_scheme = '-A-A'
+
+        return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme=rhyme_scheme)
 
     def detect_repeating(self, alignment):
         # Иногда генеративная модель выдает повторы существтельных типа "любовь и любовь" в одной строке.
@@ -1461,8 +1817,11 @@ if __name__ == '__main__':
 
     # ================================================
 
-    #alignment = aligner.build_from_markup('Без му́́ки не́т и нау́ки.')
-    #print('\n' + alignment.get_stressed_lines() + '\n')
+    alignment = aligner.build_from_markup("""иска́л бара́нину для пло́ва
+но что́ то сли́шком дорога́
+и ту́т случа́йно подверну́лась
+нога́""")
+    print('\n' + alignment.get_stressed_lines() + '\n')
 
     text = """Во все, что ты верил, не бывши таким,
 Растоптали, сожгли, разорвали,
@@ -1480,11 +1839,324 @@ if __name__ == '__main__':
 
     true_markups = [
         ("""на бра́чном ло́же я́ был за́гнан в у́гол""", ""),
+        ("""мечу́ икру́ цвета́ в ассортиме́нте""", ""),
+        ("""где ти́гры во́дятся нельзя́ лови́ть воро́н""", ""),
+        ("""Избу́шка, не к тому́ ты за́дом поверну́лась!..""", ""),
+        ("""бегу́т лега́вые с утра́ уже́ борзы́е""", ""),
+        ("""Веде́м по жи́зни мы́ друг дру́га за́ нос""", ""),
+        ("""Лиши́ть молча́щих сло́ва невозмо́жно.""", ""),
+        ("""В год Петуха́ учи́тесь кукаре́кать.""", ""),
+        ("""Оле́г два дня́ прожи́л без во́дки.""", ""),
+        ("""«Газпро́м» мечты́ мои́ втридо́рога сбыва́ет…""", ""),
+        ("""Втридо́рога плачу́ я за деше́вку.""", ""),
+        ("""Я ду́хом сто́ек… за́ три дня́ до ба́ни.""", ""),
+        ("""Коле́са с тю́нингом – а кру́тимся, как пре́жде…""", ""),
+        ("""Едва́ просну́лся – ту́т же разбуди́ли!""", ""),
+        ("""И за́мер ми́р перед свое́й кончи́ной""", ""),
+        ("""Коль по́д руку попа́лся - ты́ вино́вен!""", ""),
+        ("""фило́логу никто́ не зво́нит""", ""),
+        ("""Мой телефо́н заси́жен ва́шими «жучка́ми»!""", ""),
+        ("""домкра́т под о́ба ва́ши чу́ма""", ""),
+        ("""Быва́ет по́здно то́лько ли́шь со сме́ртью...""", ""),
+        ("""Как по́здно мы́ осознае́м оши́бки...""", ""),
+        ("""А что́ на у́жин? Вно́вь рука́ и се́рдце?""", ""),
+        ("""А ра́ньше воскресе́нья бы́ли ча́ще.""", ""),
+        ("""И вно́вь мозги́ заны́ли к непого́де.""", ""),
+        ("""Мне заказа́ть уби́йство не по сре́дствам.""", ""),
+        ("""Ты мне́ присни́лась... Да́, опя́ть кошма́ры.""", ""),
+        ("""Я жи́знь люби́л... Она́ меня́ не о́чень...""", ""),
+        ("""А с кошелько́м вы бы́ли симпати́чней!""", ""),
+        ("""Я ва́с люби́л, пока́ хвата́ло де́нег...""", ""),
+        ("""Чем сме́х с тобо́й, уж лу́чше телеви́зор.""", ""),
+        ("""Избу́шка, не к тому́ ты за́дом поверну́лась!""", ""),
+        ("""Бог мо́й, кто ны́нче хо́дит в диссиде́нтах!""", ""),
+        ("""Сего́дня вся́ я в но́вом се́конд хе́нде!""", ""),
+        ("""Он, безусло́вно, сво́лочь - но кака́я!""", ""),
+        ("""Я ва́с посла́л... А вы́ уже́ верну́лись?""", ""),
+        ("""Ра́д сообщи́ть вам - на́с пове́сят ря́дом.""", ""),
+        ("""Нет, ге́ниям живы́м у на́с не вы́жить...""", ""),
+        ("""Заче́м мне Ва́ше се́рдце - я́ сыта́!""", ""),
+        ("""Я по́мню то́чно, что́ я ва́с забы́ла.""", ""),
+        ("""Прости́те, я́ не по́мню, мы́ на ты́?""", ""),
+        ("""Мой а́д не для двои́х.""", ""),
+        ("""К лицу́ мне бо́льше все́х иде́т молча́нье.""", ""),
+        ("""Кляну́сь! Ваш взгля́д мне сла́ще да́же то́рта.""", ""),
+        ("""В душе́ мы все́ немно́жечко поэ́ты.""", ""),
+        ("""О кра́ткости тракта́т я го́д писа́ла""", ""),
+        ("""Вранье́ всех СМИ́ так и́скренне правди́во.""", ""),
+        ("""Поро́й есть у судьбы́ свои́ заба́вы.""", ""),
+        ("""Бред в ри́фму мно́го ху́же, че́м без ри́фмы.""", ""),
+        ("""И в бо́чке лжи́ есть то́нкий ло́мтик пра́вды.""", ""),
+        ("""Жи́ть в скорлупе́ намно́го безопа́сней.""", ""),
+        ("""Ложь с ло́жью ло́жь свою́ не подели́ли.""", ""),
+        ("""Погребена́ в свои́х руи́нах мы́сли.""", ""),
+        ("""На у́шко я́ себе́ шепну́ла пра́вду.""", ""),
+        ("""Быть у́мной в на́шей жи́зни неприли́чно""", ""),
+        ("""Ино́й раз дураки́ быва́ют пра́вы.""", ""),
+        ("""От Го́спода нас отделя́ет вре́мя.""", ""),
+        ("""МозгИ́ ины́м давно́ пора́ прове́трить.""", ""),
+        ("""Как де́ньги мне́ найти́: они́ не па́хнут.""", ""),
+        ("""Ты про́жил жи́знь с поэ́зией в обни́мку?""", ""),
+        ("""Я в го́д Козы́ не жа́лю ка́к Гадю́ка.""", ""),
+        ("""Втридо́рога плачу́ я за деше́вку.""", ""),
+        ("""Жар - Пти́ца га́дит та́к же, ка́к воро́на.""", ""),
+        ("""О! Я́ поэ́т всеми́рно - неизве́стный!""", ""),
+        ("""Вы клю́нули, но сорвала́сь нажи́вка.""", ""),
+        ("""Искра́ из гла́за ста́ла вдру́г звездо́ю.""", ""),
+        ("""Молчи́те не взахлё́б, членоразде́льно!""", ""),
+        ("""Чем бо́льше де́нег, те́м доро́же сто́ит ве́тер…""", ""),
+        ("""Нет козырно́й? – тогда́ ходи́ с креди́тной…""", ""),
+        ("""Бегу́т лега́вые, с утра́ уже́ борзы́е…""", ""),
+        ("""Нет, я́ не Ба́йрон, я́ Гордо́н...""", ""),
+        ("""Поко́йся, ми́лый пра́х, до ра́достного у́тра""", ""),
+        ("""С чего́ нача́ть? Мне на́лили «штрафну́ю»…""", ""),
+        ("""Все се́меро - козлы́! - поду́мал Во́лк...""", ""),
+        ("""Как моцаре́льно - равио́льны вечера́!""", ""),
+        ("""Вот ры́ба заливна́я, угоща́йтесь.""", ""),
+        ("""Надё́жный кле́й Моме́нт: дыши́те глу́бже""", ""),
+        ("""а на стене́ всё све́чи све́чи""", ""),
 
-        ("""ми́р разгова́ривает с на́ми
-а мы́ по пре́жнему немы́
-и до сих по́р не зна́ем са́ми
-кто мы́""", 'ABAB'),
+        ("""дети́шки, отвлеки́те па́пу,
+        а я́ ещё́ трои́х рожу́""", "--"),
+
+        ("""смея́сь над мо́рем зубоска́лы
+        в шторм зу́бы вы́били о ска́лы""", "AA"),
+
+        ("""манья́к с распа́хнутым кафта́ном
+        яви́л свой сра́м возле лифта́ нам""", "AA"),
+
+        ("""макси́ма но́ги на́ две тре́ти
+        весьма́ смешно́ торча́т из йе́ти""", "AA"),
+
+        ("""да́й обойму́ тебя́ андре́йка
+        в восто́рге кри́кнул осьмино́г""", "--"),
+
+        ("""е́сли гра́ч не се́л бы
+        сло́вно на суку́""", "--"),
+
+        ("""мы бро́сили о́блака дом снегово́й
+        вкуси́ли полё́та свобо́ду""", "--"),
+
+        ("""массажи́ст уста́ло
+        мнё́т зухре́ бока́""", "--"),
+
+        ("""обеща́ла му́жу
+        пятеры́х рожу́""", "--"),
+
+        ("""и бы́стро дви́гая кули́сой
+        ста́л исполня́ть поле́т шмеля́""", "--"),
+
+        ("""риску́я показа́ться гру́бым
+        бегу́ за ва́ми с ледору́бом""", "AA"),
+
+        ("""стишо́к плохо́й макси́м нет ри́фмы
+        и пи́нгвин пра́вильно пингви́н""", "--"),
+
+        ("""манья́к с распа́хнутым кафта́ном
+        яви́л свой сра́м возле лифта́ нам""", "AA"),
+
+        ("""а где́ был ты́ жена́ спроси́ла
+        когда́ бог ру́ки раздава́л""", "--"),
+
+        ("""смеша́лись ко́ни ба́бы и́збы
+        не промахну́цца б не да́й бог""", "--"),
+
+        ("""нашли́ приё́м вы против ло́му
+        прям пе́ред те́м как впа́ли в ко́му""", "AA"),
+
+        ("""что зна́чит ви́димся не ча́сто?
+        доста́точно в неде́лю ча́с то""", "AA"),
+
+        ("""друг дру́га мы́ посла́ть хоти́м на
+        и э́та на́ша стра́сть взаи́мна""", "AA"),
+
+        ("""мы отходну́ю ва́м чита́ли
+        а вы́ с одра́ заче́м то вста́ли""", "AA"),
+
+        ("""сквозь до́ждь по бе́регу доро́ги
+        бегу́ стара́юсь не смотре́ть""", "--"),
+
+        ("""е́ду на рабо́ту
+        слё́зы по щека́м""", "--"),
+
+        ("""тепе́рь им хо́чется о но́ги
+        твои́ тере́ться и мурча́ть""", "--"),
+
+        ("""сперва́ вступи́ло в поясни́цу
+        и прострели́ло всю корму́""", "--"),
+
+        ("""воро́ной бог разочаро́ван
+        он е́й и сы́р и колбасу́""", "--"),
+
+        ("""а я́ отра́щиваю ще́ки
+        жуя́ проговори́л хомя́к""", "--"),
+
+        ("""здесь сне́г метё́т не ви́дно чу́ма
+        пасти́ оле́ней не хочу́ ма""", "AA"),
+
+        ("""ты лю́бишь лес моря́ и ре́ки
+        а я́ портве́йн и чебуре́ки""", "AA"),
+
+        ("""в клуб анони́мных парово́зов
+        пришё́л инко́гнито толсто́й""", "--"),
+
+        ("""Мада́м, как све́жи бы́ли ро́зы,
+        пока́ на ни́х я не дыша́л!""", "--"),
+
+        ("""За ви́димым досто́инств мно́жеством
+        Скрыва́ется поро́й ничто́жество.""", "--"),
+
+        ("""Что в и́мени тебе́ мое́м?
+        Ты зацени́ груди́ объе́м!""", "AA"),
+
+        ("""Ма́ленький ма́льчик заре́зал стару́шку –
+        Она́ забрала́ у него́ погрему́шку.""", "AA"),
+
+        ("""Не верти́те де́вки за́дом!
+        СПИ́Д не спи́т - он бро́дит ря́дом.""", "AA"),
+
+        ("""Мы́ укра́инская на́ция!
+        На́м до жо́пы радиа́ция!""", "AA"),
+
+        ("""Мы бы́ли б идеа́льной па́рой,
+        Коне́чно, е́сли бы не ты́.""", "--"),
+
+        ("""Хму́ро гре́ла но́ги у огня́
+        Пти́ца сча́стья за́втрашнего дня́.""", "AA"),
+
+        ("""не помо́жет мне́ никто́
+        я реву́ в рука́в пальто́""", "AA"),
+
+        ("""потекла́ по ро́же ту́шь
+        си́не - чё́рная к тому́ ж""", "AA"),
+
+        ("""вы не могли́ бы ва́ше ча́до
+        ко все́м хера́м забра́ть из са́да""", "AA"),
+
+        ("""вот бы хорошо́ бы, что́бы ка́ждый де́нь
+        ни́мб держа́лся ро́вно, а не набекре́нь""", "AA"),
+
+        ("""когда́ в душе́ печа́ли ко́поть
+        в одно́ лицо́ бы то́ртик сло́пать""", "AA"),
+
+        ("""я ту́т услы́шал кра́ем у́ха
+        как кто́-то по́ уху мне да́л""", "--"),
+
+        ("""кто хорошо́ уме́ет пла́вать
+        в душе́ немно́жечко говно́""", "--"),
+
+        ("""в антра́кте напили́сь в буфе́те
+        и к унита́зам на покло́н""", "--"),
+
+        ("""три го́лубя бато́н склева́ли
+        посла́ли де́да за вторы́м""", "--"),
+
+        ("""носи́те ма́ски мо́йте ру́ки
+        ина́че штра́фы ва́с убью́т""", "--"),
+
+        ("""а вдру́г трусы́ нама́жут я́дом?
+        все на проте́сты без трусо́в!""", "--"),
+
+        ("""Зимы́ ждала́, ждала́ приро́да…
+        Она́ пришла́ через полго́да.""", "AA"),
+
+        ("""Скажи́-ка, дя́дя, ве́дь не да́ром
+        С утра́ мы па́хнем перега́ром...""", "AA"),
+
+        ("""И что́, что та́нки ва́ши бы́стры?
+        Мост разведё́н, изво́льте жда́ть.""", "--"),
+
+        ("""Не на́до Ва́м пляса́ть с медве́дем,
+        он трё́х цыга́н перепляса́л.""", "--"),
+
+        ("""Сия́л стака́н в руке́ Ива́на –
+        К Ива́ну бли́зилась нирва́на.""", "AA"),
+
+        ("""Ко́стю ку́зовом заде́ли,
+        Ко́сти в Ко́сте загуде́ли.""", "AA"),
+
+        ("""Меня́ уда́рили доско́й —
+        Лежу́ я с бо́лью и тоско́й.""", "AA"),
+
+        ("""Как хорошо́, что ды́рочку для кли́змы
+        Име́ют все́ живы́е органи́змы!""", "AA"),
+
+        ("""Ми́шка косола́пый по́ лесу иде́т,
+        Ши́шки собира́ет, пе́сенки поё́т""", "AA"),
+
+        ("""Одна́жды, в студе́ную зи́мнюю по́ру,
+        Я и́з дому вы́шел и ту́т же заше́л.""", "--"),
+
+        ("""На све́те не́т ужа́снее напа́сти,
+        Чем идио́т, дорва́вшийся до вла́сти!""", "AA"),
+
+        ("""Зима́ пришла́ – моро́з и вью́га…
+        Люби́те ча́ще вы́ друг дру́га!""", "AA"),
+
+        ("""не кричи́ окса́на
+        не гони́ волну́
+        ме́дленно и чё́тко
+        говори́ тону́""", "-A-A"),
+
+        ("""массажи́ст уста́ло
+        мнё́т зухре́ бока́
+        те́ что отрасти́ла
+        си́дючи в вэ ка́""", "-A-A"),
+
+        ("""пиро́г от пирога́ немно́го
+        все ж отлича́ется поро́й
+        оди́н плыве́т вон ка́к пиро́га
+        друго́й стои́т на я́коре""", "A-A-"),
+
+        ("""обеща́ла му́жу
+        пятеры́х рожу́
+        ма́лость не хвати́ло
+        му́жу куражу́""", "-A-A"),
+
+        ("""мы бро́сили о́блака дом снегово́й
+        вкуси́ли полё́та свобо́ду
+        и па́даем вни́з превраща́ясь с тобо́й
+        в во́ду""", "ABAB"),
+
+        ("""вдруг в перепо́лненный тролле́йбус
+        воше́л с тромбо́ном челове́к
+        и бы́стро дви́гая кули́сой
+        ста́л исполня́ть поле́т шмеля́""", "----"),
+
+        ("""влади́мир пу́тин поздравля́ет
+        всех россия́нок и мужчи́н
+        что жду́т их до́ма задева́я
+        рога́ми за висю́лечки""", "----"),
+
+        ("""благодарю́ тебя́ созда́тель
+        за то́ что ты́ созда́л меня́
+        за то́ что ты́ созда́л вади́ма
+        простра́нство вре́мя и нтерне́т""", "----"),
+
+        ("""враги́ не то́лько обстреля́ли
+        око́пы моего́ полка́
+        но и на сте́ну мне́ вконта́кте
+        понаписа́ли ме́рзких сло́в""", "----"),
+
+        ("""у ва́с ли не́т ли огоньку́ ли
+        ай хорошо́ благодарю́
+        хотя́ куда́ там помоги́те
+        горю́""", "-A-A"),
+
+        ("""вопро́са два́ где ж ты́ был ра́ньше
+        все э́ти до́лгие года́
+        и не пойти́ ль тебе́ обра́тно
+        туда́""", "-A-A"),
+
+        ("""е́сли гра́ч не се́л бы
+        сло́вно на суку́
+        я́ б и не заме́тил
+        что́ ещё́ могу́""", "----"),
+
+        ("""мир разгова́ривает с на́ми
+        а мы́ по пре́жнему немы́
+        и до сих по́р не зна́ем са́ми
+        кто мы́""", 'ABAB'),
 
         ("""Откупо́рил, налива́ю
         Бу́льки ду́шу ворожа́т
@@ -1492,18 +2164,18 @@ if __name__ == '__main__':
         Ка́к ребё́нок ма́ме, ра́д""", "ABAB"),
 
         ("""И́х куку́шка на крюку́
-Ме́рит вре́мя старику́
-По часо́чку, по деньку́
-Ме́лет го́дики в муку́""", "AAAA"),
+        Ме́рит вре́мя старику́
+        По часо́чку, по деньку́
+        Ме́лет го́дики в муку́""", "AAAA"),
 
         ("""Чем се́кс с тобо́й, уж лу́чше телеви́зор
-Иль на худо́й коне́ц нажра́ться антифри́за.""", "AA"),
+        Иль на худо́й коне́ц нажра́ться антифри́за.""", "AA"),
 
-        ("""два́ лингви́ста спо́ря тво́рог иль творо́г
-мо́рдами друг дру́га би́ли об поро́г""", "AA"),
+        ("""два́ лингви́ста спо́ря тво́рог и́ль творо́г
+        мо́рдами друг дру́га би́ли об поро́г""", "AA"),
 
         ("""кто́ не лю́бит ка́ши ма́нной —
-то́т како́й-то о́чень стра́нный!""", "AA"),
+        то́т како́й-то о́чень стра́нный!""", "AA"),
 
         ("""а моя́ любо́вь на
         со́том этаже́
@@ -1521,9 +2193,9 @@ if __name__ == '__main__':
         Гляди́т на блю́дце.""", "ABAB"),
 
         ("""А где хра́мы и попы́
-        Та́м к нау́ке все́ слепы́
+        Там к нау́ке все́ слепы́
         Окропя́т, махну́т кади́лом
-        Та́к заго́нят все́х в моги́лу""", "AABB"),
+        Так заго́нят все́х в моги́лу""", "AABB"),
 
         ("""Но дурака́м везё́т, и э́то то́чно
         Хотя́ никто́ не зна́ет наперё́д
@@ -1535,10 +2207,10 @@ if __name__ == '__main__':
         Да́же ста́рым не́т поко́я
         Чё́рте что́ на у́м идё́т""", "ABAB"),
 
-        ("""С то́й поры́, когда́ черну́ха
+        ("""С той поры́, когда́ черну́ха
         На душе́, с овчи́нку све́т
-        То́лько вспо́мню ту́ стару́ху
-        Та́к хандры́ в поми́не не́т""", "ABAB"),
+        Только вспо́мню ту́ стару́ху
+        Так хандры́ в поми́не не́т""", "ABAB"),
 
         ("""И ми́р предста́л как в стра́шной ска́зке
         Пусты́ доро́ги про́бок не́т
@@ -1578,12 +2250,12 @@ if __name__ == '__main__':
         ("""И труба́ прое́кту с га́зом
         У тебя́ все намази́
         Возверне́м реа́льность сра́зу
-        Ты́ им ви́рус привези́""", "ABAB"),
+        Ты им ви́рус привези́""", "ABAB"),
 
         ("""Даны́ кани́кулы – во бла́го
-И, что́бы вре́мя не теря́ть
-Мы на Парна́с упря́мым ша́гом
-Стихи́ отпра́вимся писа́ть""", "ABAB"),
+        И, что́бы вре́мя не теря́ть
+        Мы на Парна́с упря́мым ша́гом
+        Стихи́ отпра́вимся писа́ть""", "ABAB"),
 
         ("""Ста́л он расспра́шивать сосе́да
         Ведь на рыба́лку, хо́ть с обе́да
@@ -1686,8 +2358,8 @@ if __name__ == '__main__':
         ссыкла́""", "-A-A"),
 
         ("""я проводни́к электрото́ка
-        зажгу́ две́ ла́мпочки в носу́
-        как только но́жницы в розе́тку
+        зажгу́ две ла́мпочки в носу́
+        как то́лько но́жницы в розе́тку
         засу́""", "-A-A"),
 
         ("""узна́й вы из како́го со́ра
@@ -1721,19 +2393,19 @@ if __name__ == '__main__':
         #ружья́""", "-A-A"),
 
         ("""меж на́ми пробежа́ла и́скра
-         а у тебя́ в рука́х кани́стра""", 'AA'),
+        а у тебя́ в рука́х кани́стра""", 'AA'),
 
         ("""риску́я показа́ться гру́бым
-         бе́гу за ва́ми с ледору́бом""", "AA"),
+        бегу́ за ва́ми с ледору́бом""", "AA"),
 
         ("""был в се́ксе о́чень виртуо́зен
         но ли́шь в миссионе́рской по́зе""", "AA"),
 
         ("""из но́рки вы́сунув еба́льце
-        мне бурунду́к отгры́з два́ па́льца""", "AA"),
+        мне бурунду́к отгры́з два па́льца""", "AA"),
 
         ("""от ушеспание́льной си́ськи
-        гле́б вы́жрал во́дку ро́м и ви́ски""", "AA"),
+        глеб вы́жрал во́дку ро́м и ви́ски""", "AA"),
 
         ("""фура́жка с ге́рбом ство́л и кси́ва
         лицо́ печа́льно но краси́во""", "AA"),
@@ -1763,30 +2435,30 @@ if __name__ == '__main__':
         а то́ не тя́нет на грехи́ то""", "AA"),
 
         ("""голки́пер че́шский не меша́й бы
-        забро́сили б ещё́ две́ ша́йбы""", "AA"),
+        забро́сили б ещё́ две ша́йбы""", "AA"),
 
-        ("""ми́р электри́чества бичу́я
+        ("""мир электри́чества бичу́я
         иду́ держа́ в руке́ свечу́ я""", "AA"),
 
         ("""с тобо́ю жи́ли мы́ бок о́ бок
         веще́й нажи́ли пя́ть коро́бок""", "AA"),
 
-        ("""не смо́г ма́г сня́ть вене́ц безбра́чья
+        ("""не смо́г маг сня́ть вене́ц безбра́чья
         ведь развожу́ кото́в и сра́ч я""", "AA"),
 
-        ("""два́ ме́рса джи́п четы́ре во́львы
+        ("""два ме́рса джи́п четы́ре во́львы
         совсе́м сбеси́лись с жи́ру что́ ль вы""", "AA"),
 
-        ("""а то́чно у тебя три́ я́хты
+        ("""а то́чно у тебя́ три я́хты
         живе́шь в хруще́вке в ебеня́х ты""", "AA"),
 
-        ("""в а́ли экспре́сс и на ави́то
-иска́л любо́вь но нет любви́ то""", "AA"),
+        ("""в али́ экспре́сс и на ави́то
+        иска́л любо́вь но не́т любви́ то""", "AA"),
 
-        ("""хоте́л в камо́рку я зайти́ но
-        чу́ там струга́ют бурати́но""", "AA"),
+        ("""хоте́л в камо́рку я́ зайти́ но
+        чу та́м струга́ют бурати́но""", "AA"),
 
-        ("""ба́б мно́го чи́стых и наи́вных
+        ("""баб мно́го чи́стых и наи́вных
         а мы́ скоты́ суе́м хуи́ в них""", "AA"),
 
         ("""Расскажу́ про молодё́жь
@@ -1796,7 +2468,7 @@ if __name__ == '__main__':
 
         ("""я нё́с петро́ву на лине́йке
         и у меня́ смеще́нье гры́ж
-        а ведь петро́вой говори́ли
+        а ве́дь петро́вой говори́ли
         не жри́ ж""", '-A-A'),
 
         ("""я́ с тоско́й гляжу́ на
@@ -1804,16 +2476,16 @@ if __name__ == '__main__':
         на лицо́ мне ю́ность
         ко́льщик наколи́""", "-A-A"),
 
-        ("""я распахну́л ду́ши бушла́ты
-        но всё равно́ с други́м ушла́ ты""", "AA"),
+        ("""я распахну́л души́ бушла́ты
+        но всё́ равно́ с други́м ушла́ ты""", "AA"),
 
         ("""к восьмо́му ма́рта одни́ тра́ты
         наде́юсь что́ уйдё́шь сама́ ты""", "AA"),
 
         ("""не сто́ль криво́й была́ судьба́ бы
-        когда́ бы по́нял я́ су́ть ба́бы""", "AA"),
+        когда́ бы по́нял я́ суть ба́бы""", "AA"),
 
-        ("""гле́б у жены́ проси́л поща́ды
+        ("""глеб у жены́ проси́л поща́ды
         ну сле́зь с меня́ свари́ борща́ ты""", "AA"),
 
         ("""чита́ет ста́рая ари́на
@@ -1834,23 +2506,20 @@ if __name__ == '__main__':
         ("""взя́л вместо во́дки молока́ я
         присни́тся же хуйня́ така́я""", "AA"),
 
-        ("""два́ па́рных отыска́л носка́ я
+        ("""два па́рных отыска́л носка́ я
         встреча́й краса́вчика тверска́я""", "AA"),
 
         ("""сня́ть се́лфи с ка́мнем на мосту́ ли
         иль сто́я под крюко́м на сту́ле""", "AA"),
 
         ("""не оттого́ ль мне одино́ко
-        что лу́к е́м то́лько и чесно́к а""", "AA"),
+        что лук е́м только и чесно́к а""", "AA"),
 
         ("""оле́г не дре́ль но почему́ то
         всё вре́мя све́рлит мо́зг кому́ то""", "AA"),
 
         ("""взя́л динами́т поджё́г фити́ль но
         так неуме́ло инфанти́льно""", "AA"),
-
-        ("""хоть в фэ́ э́с бэ́ то вы́ могли́ бы
-        не говори́ть что мы́ тали́бы""", "AA"),
 
         ("""лежа́т на кла́дбище не те́ ли
         чей ду́х был здра́в в здоро́вом те́ле""", "AA"),
@@ -1892,39 +2561,36 @@ if __name__ == '__main__':
         заруби́л себе́ я
         э́то на носу́""", "-A-A"),
 
-        ("""о граждани́н спи́рт пью́щий кто́ ты
-исто́чник ра́дости ль иль рво́ты""", "AA"),
+        ("""о граждани́н спирт пью́щий кто́ ты
+        исто́чник ра́дости ль иль рво́ты""", "AA"),
 
         ("""и заче́м вчера́ я
         вле́зла в э́тот спо́р
         на́до перепря́тать
         тру́пы и топо́р""", "-A-A"),
 
-        ("""дре́ль изоле́нту пассати́жи
-        отло́жь ма́ш с му́жем накати́ же""", "AA"),
-
-        ("""гле́б закупи́л побо́льше брю́та
-        с него́ изя́щнее хрю́ хрю́ то""", "AA"),
+        ("""дрель изоле́нту пассати́жи
+        отло́жь маш с му́жем накати́ же""", "AA"),
 
         ("""хоте́л взя́ть льго́тные креди́ты
-        сказа́ли на́хуй мол иди́ ты""", "AA"),
+        сказа́ли на́хуй мо́л иди́ ты""", "AA"),
 
-        ("""жи́знь пролети́т мы все́ умре́м на
+        ("""жизнь пролети́т мы все́ умре́м на
         и кто́ кути́л и кто́ жи́л скро́мно""", "AA"),
 
         ("""не понима́ю нихера́ я
-        заче́м бо́х за́пер две́ри ра́я""", "AA"),
+        заче́м бох за́пер две́ри ра́я""", "AA"),
 
-        ("""а на пове́стке дня́ две́ те́мы
+        ("""а на пове́стке дня́ две те́мы
         бюдже́т и почему́ в пизде́ мы""", "AA"),
 
         ("""вам спря́тать удало́сь в трико́ то
-        ча́сть ту́ши ни́же антреко́та""", "AA"),
+        часть ту́ши ни́же антреко́та""", "AA"),
 
-        ("""чте́ц что то мя́млил нам фальце́том
-        та́к и не по́нял что в конце́ там""", "AA"),
+        ("""чтец что́ то мя́млил на́м фальце́том
+        так и не по́нял что́ в конце́ там""", "AA"),
 
-        ("""гле́б пиздану́лся с эвере́ста
+        ("""глеб пиздану́лся с эвере́ста
         у на́с вопро́с заче́м поле́з то""", "AA"),
 
         ("""Я сра́зу осозна́л, что встре́тились не зря́ мы
@@ -1934,7 +2600,7 @@ if __name__ == '__main__':
 
         ("""не бу́дь у ба́нь и у кофе́ен
         пиаротде́лов и прессслу́жб
-        мы все б завши́вели и пи́ли
+        мы все́ б завши́вели и пи́ли
         из лу́ж б""", "-A-A"),
 
         ("""по суперма́ркету с теле́жкой
@@ -1972,15 +2638,10 @@ if __name__ == '__main__':
         вот у слона́ гора́здо ши́ре
         чем у́""", "-A-A"),
 
-        ("""люблю́ натру́женные ру́ки
-        и ко́сы ру́сые твои́
-        а е́сли вду́маться не бо́льно
-        то и́""", "-A-A"),
-
         ("""когда́ уви́дела принце́сса
         моё́ фами́льное гнездо́
         то поняла́ несоверше́нство
-        гнё́зд до́""", "-A-A"),
+        гнёзд до́""", "-A-A"),
 
         ("""вот от люде́й мол на́ два ме́тра
         а мне́ поня́тно не вполне́
@@ -2008,13 +2669,13 @@ if __name__ == '__main__':
         не вся́""", "----"),
 
         ("""ты сли́шком мно́го е́шь клетча́тки
-        хле́б с отрубя́ми на обе́д
+        хлеб с отрубя́ми на обе́д
         не ви́жу ша́хматы и кста́ти
         где пле́д""", "-A-A"),
 
         ("""в трущо́бах во́лки приуны́ли
         воро́ны на ветвя́х скорбя́т
-        верну́ли но́ль но́ль три́ проми́лли
+        верну́ли но́ль ноль три́ проми́лли
         наза́д""", "ABAB"),
 
         ("""ты не пришё́л сказа́л что про́бки
@@ -2062,33 +2723,102 @@ if __name__ == '__main__':
         так на́ши де́тские жела́нья
         внеза́пно настига́ют на́с""", "----"),
 
-        #("""мы вме́сте с тобо́й занима́лись цигу́н
-        # и вме́сте ходи́ли на йо́гу
-        # но ты́ вдруг сказа́ла мне вместо сёгу́н
-        # сё́гун""", "ABAB"),
+        ("""моя́ пози́ция по кры́му
+        чуть измени́лась со вчера́
+        а о́льга э́того не зна́ет
+        и мо́лча в ку́хне ре́жет хле́б""", "----"),
+
+        ("""давно́ в лесу́ не слы́шно дя́тла
+        ах неуже́ли пти́чий гри́пп
+        и э́той му́дрой де́рзкой пти́це
+        так по́дло оборва́л поле́т""", "----"),
+
+        ("""портно́вским ме́тром укоко́шен
+        в перми́ замо́рский моделье́р
+        а не́фиг со свои́м дюймо́вым
+        к портны́м в чужо́е ателье́""", "----"),
+
+        ("""пойде́м оле́жка погуля́ем
+        окса́на ще́лкнула замко́м
+        и во́т оле́г несе́тся к две́ри
+        скули́т захо́дится слюно́й""", "----"),
+
+        ("""мы вме́сте с тобо́й занима́лись цигу́н
+        и вме́сте ходи́ли на йо́гу
+        но ты́ вдруг сказа́ла мне вместо сёгу́н
+        сё́гун""", "ABAB"),
+
+        ("""оле́гу суперру́ку да́ли
+        за две́ обы́чные руки́
+        оле́г иде́т и спра́ва лю́ди
+        с восто́ргом смо́трят на него́""", "----"),
+
+        ("""сидя́т в подъе́здах нимфома́ны
+        глаза́ безду́мны и пусты́
+        в шприце́ у ка́ждого по ни́мфе
+        и ве́ны взду́лись на рука́х""", "----"),
+
+        ("""уста́вший прихожу́ с рабо́ты
+        жена́ такти́чна и мила́
+        или хенда́й опя́ть разби́ла
+        или в суббо́ту тё́щу ждё́м""", "----"),
+
+        ("""поля́ки шли́ за лжеоле́гом
+        чтобы забра́ть себе́ москву́
+        но настоя́щих два́ оле́га
+        тотча́с поря́док навели́""", "A-A-"),
+
+        ("""ты́ была́ б мне та́ня
+        о́чень дорога́ 
+        е́сли б не пришло́сь мне
+        спи́ливать рога́""", "-A-A"),
+
+        ("""как хорошо́ что е́сть тру ба́бы
+        ещё́ немно́го и труба́ бы""", "AA"),
+
+        ("""Я сра́зу осозна́л, что встре́тились не зря́ мы
+        И вско́ре сбы́лось всё́, о чё́м мечта́л
+        Дово́льно ско́ро я́ к жилью́ прекра́сной да́мы
+        Доро́жку вечера́ми протопта́л""", "ABAB"),
+
+        ("""но́ль килокоро́вий
+        на́дпись на торте́
+        хо́ть и страшнова́то
+        о́н уже́ во рте́""", "-A-A"),
+
+        ("""не подберу́ ника́к слова́ я
+        от ва́ших сло́в охуева́я""", "AA"),
+
+        ("""вот до́ктор ре́жет пацие́нта
+        и не́рвно ко́мкая кишки́
+        не то́ не то́ бормо́чет по́д нос
+        и и́щет ри́фму под абсце́сс""", "----"),
 ]
 
 
     for true_markup, true_scheme in true_markups:
-        poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
-        alignment = aligner.align(poem, check_rhymes=True)
-        #print(alignment)
-        #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
-        #print('='*80)
-        #print(alignment.get_unstressed_lines())
-        #for pline in alignment.poetry_lines:
-        #    print(pline.stress_signature_str)
-        pred_markup = alignment.get_stressed_lines()
-        expected_markup = '\n'.join(poem)
-        if pred_markup != expected_markup:
-            print('Markup test failed')
-            print('Expected:\n{}\n\nOutput:\n{}'.format(expected_markup, pred_markup))
+        try:
+            poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
+            alignment = aligner.align(poem, check_rhymes=True)
+            #print(alignment)
+            #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
+            #print('='*80)
+            #print(alignment.get_unstressed_lines())
+            #for pline in alignment.poetry_lines:
+            #    print(pline.stress_signature_str)
+            pred_markup = alignment.get_stressed_lines()
+            expected_markup = '\n'.join(poem)
+            if pred_markup != expected_markup:
+                print('Markup test failed')
+                print('Expected:\n{}\n\nOutput:\n{}'.format(expected_markup, pred_markup))
+                exit(0)
+
+            if alignment.rhyme_scheme != true_scheme:
+                print('Rhyming scheme mismatch')
+                print('Poem:\n{}\nExpected scheme={}\nPredicted scheme={}'.format(true_markup, true_scheme, alignment.rhyme_scheme))
+                exit(0)
+        except Exception as ex:
+            print('Exception occured on sample:\n{}\n\n{}'.format(true_markup, traceback.format_exc(())))
             exit(0)
 
-        if alignment.rhyme_scheme != true_scheme:
-            print('Rhyming scheme mismatch')
-            print('Poem:\n{}\nExpected scheme={}\nPredicted scheme={}'.format(true_markup, true_scheme, alignment.rhyme_scheme))
-            exit(0)
-
-
-    print('All tests passed OK.')
+    print('{} tests passed OK.'.format(len(true_markups)))
