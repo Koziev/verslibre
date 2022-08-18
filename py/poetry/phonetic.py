@@ -65,7 +65,7 @@ class Accents:
         self.yo_words = dict()
         with io.open(path, 'r', encoding='utf-8') as rdr:
             for line in rdr:
-                word = line.strip()
+                word = line.strip().lower()
                 key = word.replace('ё', 'е')
                 self.yo_words[key] = word
 
@@ -124,7 +124,7 @@ class Accents:
                                 n_vowels += 1
                                 if c.isupper():
                                     stress = n_vowels
-                                    self.word_accents_dict[word] = stress
+                                    self.word_accents_dict[word.lower()] = stress
                                     break
 
         if True:
@@ -132,9 +132,9 @@ class Accents:
             logging.info('Loading stress information from "%s"', path2)
             with codecs.open(path2, 'r', 'utf-8') as rdr:
                 for line in rdr:
-                    tx = line.strip().split(u'#')
+                    tx = line.strip().split('#')
                     if len(tx) == 2:
-                        forms = tx[1].split(u',')
+                        forms = tx[1].split(',')
                         for form in forms:
                             word = self.sanitize_word(form.replace('\'', '').replace('`', ''))
                             if all_words is None or word in all_words:
@@ -150,16 +150,15 @@ class Accents:
                                         self.word_accents_dict[word] = nb_vowels_before
 
         if True:
-            stress_char = u'́'
-            stress2_char = u'̀'
+            stress_char = '́'
+            stress2_char = '̀'
             p3 = os.path.join(data_dir, 'ruwiktionary-accents.txt')
             logging.info('Loading stress information from "%s"', p3)
             with codecs.open(p3, 'r', 'utf-8') as rdr:
                 for iline, line in enumerate(rdr):
                     word = line.strip()
                     if '-' not in word:
-                        nword = word.replace(stress_char, '').replace('ё', 'е')\
-                            .replace('\'', '').replace('ѝ', 'и').replace('ѐ', 'е').replace(stress2_char, '')
+                        nword = word.replace(stress_char, '').replace('\'', '').replace('ѝ', 'и').replace('ѐ', 'е').replace(stress2_char, '').lower()
                         if len(nword) > 2:
                             if stress_char in word:
                                 accent_pos = word.index(stress_char)
@@ -174,8 +173,9 @@ class Accents:
                             elif 'ё' in word:
                                 accent_pos = word.index('ё')
                                 nb_vowels_before = self.get_vowel_count(word[:accent_pos], abbrevs=False)
+                                stress_pos = nb_vowels_before + 1
                                 if nword not in self.word_accents_dict:
-                                    self.word_accents_dict[nword] = nb_vowels_before
+                                    self.word_accents_dict[nword] = stress_pos
 
         if True:
             path = os.path.join(data_dir, 'words_accent.json')
@@ -382,6 +382,9 @@ class Accents:
             return len(word0)
 
         return vowel_count
+
+    def is_oov(self, word):
+        return 'ё' not in word and word not in self.word_accents_dict and word not in self.ambiguous_accents and word not in self.ambiguous_accents2
 
     def predict_ambiguous_accent(self, word, ud_tags):
         best_accented = None
@@ -1513,7 +1516,7 @@ if __name__ == '__main__':
              'трёхвалЕнтный голубОе дЕтям сочнЕйшего землЕй дождЕй полудождЯми конЕк остаЁтся остаЕтся гОды кИн кинО сЫн'.split() +\
              'крУтиш знАеш смОжеш льЮцца бъЕтся грУсный брАццы прЯчте блЕщщут щщУпать Эхооооо мчИцца рвЕтьса сссУка клАвишь'.split() +\
              'плОтьник щщенкИ скрЫтьса стрАсно сьЕли дмИтрий дмИттрий льЮцца спрЯчте свЕточь здАчу гнУтса'.split() +\
-             'швАбрщик сберЕч встрЕтимса трИццать щщАстья вощОный суперрУку бьЮца лжеолЕгом'.split()
+             'швАбрщик сберЕч встрЕтимса трИццать щщАстья вощОный суперрУку бьЮца лжеолЕгом втроЁм вдвоЁм проЁмом плЁс'.split()
     for word in xwords:
         n_vowels = 0
         true_stress = -1
@@ -1537,10 +1540,10 @@ if __name__ == '__main__':
     # Поверка точной рифмовки слов без неоднозначностей
     # =========================================================
 
-    r = rhymed(accents, 'разъём', [], 'вдвоём', [])
+    r = rhymed(accents, 'проём', [], 'втроём', [])
     assert(r is True)
 
-    r = rhymed(accents, 'проём', [], 'втроём', [])
+    r = rhymed(accents, 'разъём', [], 'вдвоём', [])
     assert(r is True)
 
     r = rhymed(accents, 'яны', [], 'обезьяны', [])
