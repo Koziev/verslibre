@@ -24,9 +24,6 @@ import logging
 import argparse
 import traceback
 
-import tqdm
-import numpy as np
-
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
@@ -90,7 +87,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов (версия от 04.06.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 31.08.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
                                   "Выберите формат сочиняемых стихов:\n",
@@ -108,7 +105,7 @@ def format_menu(context, callback_data):
     format = callback_data.match.string.split('=')[1]
 
     if format == FORMAT__COMMON:
-        user_format[user_id] = 'четверостишье'
+        user_format[user_id] = 'лирика'
     elif format == FORMAT__RUBAI:
         user_format[user_id] = 'рубаи'
     elif format == FORMAT__KID:
@@ -148,9 +145,9 @@ def format_menu(context, callback_data):
                     'В этих стихах часто нет рифмы, встречается лексика 18+.\n\n' \
                     'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
                     'и я сочиню двустрочник с этими словами. '
-    elif user_format[user_id] in ('четверостишье', 'детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
+    elif user_format[user_id] in ('лирика', 'детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
         s = ''
-        if user_format[user_id] == 'четверостишье':
+        if user_format[user_id] == 'лирика':
             s = 'лирических стихов'
         elif user_format[user_id] == 'детский стишок':
             s = 'стихов для детей'
@@ -185,7 +182,7 @@ def echo(update, context):
     # update.chat.last_name
     try:
         user_id = get_user_id(update)
-        format = user_format.get(user_id, 'четверостишье')
+        format = user_format.get(user_id, 'лирика')
 
         if update.message.text == NEW:
             # Пользователь хочет, чтобы ему предложили новые саджесты для генерации.
@@ -242,7 +239,7 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
-            if format in 'четверостишье|детский стишок|философия|юмор|мистика'.split('|'):
+            if format in 'лирика|детский стишок|философия|юмор|мистика'.split('|'):
                 poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
@@ -281,7 +278,7 @@ def echo(update, context):
 
         for ipoem, (poem, score) in enumerate(poems2, start=1):
             if ipoem == 1:
-                if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
+                if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
                     poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
                 last_user_poem[user_id] = poem
@@ -401,7 +398,7 @@ if __name__ == '__main__':
             elif s == '3':
                 format = 'порошок'
             elif s == '4':
-                format = 'четверостишье'
+                format = 'лирика'
             elif s == '5':
                 format = 'детский стишок'
             elif s == '6':
@@ -432,7 +429,7 @@ if __name__ == '__main__':
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
 
-                if format in 'четверостишье|детский стишок|философия|юмор|мистика|частушка'.split('|'):
+                if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
                     poem = poetry_generator.continue8(poem)
 
                 for line in poem:

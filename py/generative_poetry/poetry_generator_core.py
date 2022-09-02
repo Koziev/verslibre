@@ -712,11 +712,11 @@ class PoetryGeneratorCore(object):
         # ===============================================================
         ranked_poems = []
 
-        if format in 'четверостишье|детский стишок|философия|юмор|мистика'.split('|'):
+        if format in 'лирика|детский стишок|философия|юмор|мистика'.split('|'):
             do_check_rhymes = True
             score_threshold = 0.05
             lines_count = 4
-        elif format in 'рубаи|частушка'.split('|'):
+        elif format in 'рубаи|частушка|Филатов|Пушкин|Крылов'.split('|'):
             do_check_rhymes = False
             score_threshold = 0.00
             lines_count = 4
