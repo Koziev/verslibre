@@ -517,7 +517,12 @@ class LineStressVariant(object):
         self.stress_signature = list(itertools.chain(*(w.stress_signature for w in stressed_words)))
         self.stress_signature_str = ''.join(map(str, self.stress_signature))
         self.init_rhyming_tail()
-        self.score_sequence(aligner)
+        if aligner is not None:
+            self.score_sequence(aligner)
+
+    @staticmethod
+    def build_empty_line():
+        return LineStressVariant('', [], None)
 
     def score_sequence(self, aligner):
         self.total_score = reduce(lambda x, y: x*y, [w.score for w in self.stressed_words])
@@ -1198,6 +1203,9 @@ class PoetryStressAligner(object):
         elif len(lines) == 1:
             return self.align1(lines)
         else:
+            if not check_rhymes:
+                return self.align_without_rhyming(lines)
+
             raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
 
     def check_rhyming(self, rhyming_tail1, rhyming_tail2):
@@ -1264,220 +1272,6 @@ class PoetryStressAligner(object):
         else:
             plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
             return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
-
-    def align_AABA_old(self, lines):
-        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
-
-        # Список вариантов простановки ударения с учётом опциональности ударений для союзов, предлогов и т.д.
-        plinevx = [pline.get_stress_variants(self) for pline in plines]
-
-        # Идем по списку вариантов, отображаем на эталонные метры и ищем лучший вариант.
-        best_variant = None
-        best_score = -1.0
-        best_meter = None
-        best_ivar = None
-        best_rhyme_scheme = None
-
-        total_permutations = reduce(lambda x, y: x * y, [len(z) for z in plinevx])
-        if total_permutations > 10000:
-            raise ValueError('Too many optional stresses: {}'.format(total_permutations))
-
-        vvx = list(itertools.product(*plinevx))
-
-        for ivar, plinev in enumerate(vvx):
-            # plinev это набор из четырех экземпляров LineStressVariant.
-
-            last_pwords = [pline.get_rhyming_tail() for pline in plinev]
-            r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
-            r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
-            r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
-
-            if r01 and r13 and not r02:
-                #score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
-                score1234, mapped_meter = self._align_line_groups([[plinev[0]], [plinev[1]], [plinev[2]], [plinev[3]]])
-
-                score = score1234 * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-                if score > best_score:
-                    best_variant = plinev
-                    best_score = score
-                    best_meter = mapped_meter
-                    best_ivar = ivar
-                    best_rhyme_scheme = 'AABA'
-
-        if best_variant is None:
-            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
-        else:
-            return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
-
-    def align4_old(self, lines, check_rhymes):
-        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
-
-        # Список вариантов простановки ударения с учётом опциональности ударений для союзов, предлогов и т.д.
-        plinevx = [pline.get_stress_variants(self) for pline in plines]
-
-        # Идем по списку вариантов, отображаем на эталонные метры и ищем лучший вариант.
-        best_variant = None
-        best_score = 0.0
-        best_meter = None
-        best_ivar = None
-        best_rhyme_scheme = None
-
-        total_permutations = reduce(lambda x, y: x * y, [len(z) for z in plinevx])
-        if total_permutations > 10000:
-            raise ValueError('Too many optional stresses: {}'.format(total_permutations))
-
-        vvx = list(itertools.product(*plinevx))
-
-        for ivar, plinev in enumerate(vvx):
-            # plinev это набор из четырех экземпляров LineStressVariant.
-
-            # Проверим, что эти 4 строки имеют рифмовку
-            rhyme_scheme = '----'
-            rhyming_score = 0.0
-            mapped_meter = None
-
-            # проверяем все пары слов
-            last_pwords = [pline.get_rhyming_tail() for pline in plinev]
-            r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
-            r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
-            r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
-            r12 = self.check_rhyming(last_pwords[1], last_pwords[2])
-            r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
-            r23 = self.check_rhyming(last_pwords[2], last_pwords[3])
-
-            # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
-            # желательно устранять из обучающего датасета.
-            if r01 and r12 and r23:
-                rhyme_scheme = 'AAAA'
-            elif r02 and r13:
-                rhyme_scheme = 'ABAB'
-            elif r03 and r12:
-                rhyme_scheme = 'ABBA'
-            # 22-12-2021 добавлена рифмовка AABB
-            elif r01 and r23:
-                rhyme_scheme = 'AABB'
-            # 28-12-2021 добавлена рифмовка "рубаи" AABA
-            elif r01 and r03 and not r02:
-                rhyme_scheme = 'AABA'
-            # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
-            elif r02 and not r13:
-                rhyme_scheme = 'A-A-'
-            elif not r02 and r13:
-                rhyme_scheme = '-A-A'
-            else:
-                rhyme_scheme = '----'
-
-            rhyming_score = 0.0
-            mapped_meter = None
-            if rhyme_scheme == 'ABAB':
-                # Оцениваем, насколько хорошо соответствуют сигнатуры строк для схемы рифмовки ABAB
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-            elif rhyme_scheme == 'ABBA':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[3]), (plinev[1], plinev[2])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-            elif rhyme_scheme == 'AABB':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1]), (plinev[2], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - score1234)
-            elif rhyme_scheme == 'AABA':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
-            elif rhyme_scheme == 'A-A-':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
-            elif rhyme_scheme == '-A-A':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
-            elif rhyme_scheme == 'AAAA':
-                score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[1], plinev[2], plinev[3])])
-                rhyming_score = 1.0 - COEFF['@225']*(1.0 - pow(score1234, 0.5))
-            else:
-                if check_rhymes:
-                    #continue
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0],), (plinev[1],), (plinev[2],), (plinev[3],)])
-                    rhyming_score = 0.1*(1.0 - COEFF['@225'] * (1.0 - pow(score1234, 0.5)))
-                else:
-                    score1234, mapped_meter = self._align_line_groups([(plinev[0], plinev[2]), (plinev[1], plinev[3])])
-                    rhyming_score = 0.5*(1.0 - COEFF['@225'] * (1.0 - pow(score1234, 0.5)))
-
-            score = rhyming_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-
-            # 27.06.2022 предпочитаем максимально зарифмованную разметку, поэтому прежде всего считаем, сколько строк
-            # зарифмовано друг с другом, подсчитывая символы '-' в идентификаторе рифмовки.
-            is_better = False
-            if best_ivar is None:
-                is_better = True
-            elif best_rhyme_scheme.count('-') > rhyme_scheme.count('-'):
-                is_better = True
-            elif best_rhyme_scheme.count('-') == rhyme_scheme.count('-') and score > best_score:
-                is_better = True
-
-            if is_better:
-                best_variant = plinev
-                best_score = score
-                best_meter = mapped_meter
-                best_ivar = ivar
-                best_rhyme_scheme = rhyme_scheme
-
-        #if best_rhyme_scheme is None or best_rhyme_scheme == '----':
-        #    if check_rhymes:
-        #        # Не получилось подобрать рифмовку окончаний строк.
-        #        # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
-        #        # можно было вывести в лог строки с каким-то дефолтными
-        #        return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
-
-        # Возвращаем найденный вариант разметки и его оценку
-        return PoetryAlignment(best_variant, best_score, best_meter, best_rhyme_scheme)
-
-    def align2_old(self, lines, check_rhymes):
-        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
-        plinevx = [pline.get_stress_variants(self) for pline in plines]
-
-        # Идем по списку вариантов, отображаем на эталонные метры и ищем лучший вариант.
-        best_variant = None
-        best_score = 0.0
-        best_meter = None
-        best_ivar = None
-        best_rhyme_scheme = None
-
-        vvx = list(itertools.product(*plinevx))
-        if len(vvx) > 10000:
-            raise ValueError('Too many optional stresses: {}'.format(len(vvx)))
-
-        for ivar, plinev in enumerate(vvx):
-            # plinev это набор из двух экземпляров LineStressVariant.
-
-            # Определяем рифмуемость
-            rhyme_scheme = None
-            rhyme_score = 1.0
-
-            last_pwords = [pline.get_rhyming_tail() for pline in plinev]
-            if self.check_rhyming(last_pwords[0], last_pwords[1]):
-                rhyme_scheme = 'AA'
-            else:
-                rhyme_scheme = '--'
-                rhyme_score = 0.5
-
-            score_12 = self.map_2signatures(plinev[0], plinev[1])
-
-            # Ищем лучшее отображение метра.
-            mapped_meter, mapping_score = self.map_meters(plinev)
-            score = rhyme_score * score_12 * mapping_score * reduce(lambda x, y: x*y, [l.get_score() for l in plinev])
-            if score > best_score:
-                best_variant = plinev
-                best_score = score
-                best_meter = mapped_meter
-                best_ivar = ivar
-                best_rhyme_scheme = rhyme_scheme
-
-        if best_rhyme_scheme is None:
-            # Не получилось подобрать рифмовку окончаний строк.
-            # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
-            # можно было вывести в лог строки с каким-то дефолтными
-            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
-
-        # Возвращаем найденный вариант разметки и его оценку
-        return PoetryAlignment(best_variant, best_score, best_meter, rhyme_scheme=best_rhyme_scheme)
 
     def align1(self, lines):
         pline1 = PoetryLine.build(lines[0], self.udpipe, self.accentuator)
@@ -1695,6 +1489,37 @@ class PoetryStressAligner(object):
             # Возвращаем найденный вариант разметки и его оценку
             best_lines = [v[1] for v in best_variant]
             return PoetryAlignment(best_lines, best_score, best_metre, rhyme_scheme=best_rhyme_scheme)
+
+    def align_without_rhyming(self, lines):
+        result_best_lines = []
+        total_score = 1.0
+        best_metre = None
+
+        # Разобьем весь текст на блоки по границам пустых строк
+        block_lines = []
+        lines2 = lines + ['']
+        for line in lines2:
+            if len(line) == 0:
+                if block_lines:
+                    # Бьем на куски длиной максимум 4 строки.
+                    while block_lines:
+                        chunk_lines = block_lines[:4]
+                        block_lines = block_lines[4:]
+                        a = self.align4(chunk_lines, check_rhymes=False)
+                        if a is None:
+                            return None
+                        else:
+                            if best_metre is None:
+                                best_metre = a.meter
+                            total_score *= a.score
+                            result_best_lines.extend(a.poetry_lines)
+                # добаваляем пустую строку, разделявшую блоки.
+                result_best_lines.append(LineStressVariant.build_empty_line())
+                block_lines = []
+            else:
+                block_lines.append(line)
+
+        return PoetryAlignment(result_best_lines[:-1], total_score, best_metre, rhyme_scheme='')
 
     def build_from_markup(self, text):
         lines = text.split('\n')
@@ -2613,7 +2438,7 @@ if __name__ == '__main__':
         Ста́л я людое́д""", "AABB"),
 
         ("""топоро́м не на́до
-        балова́ть в лесу́
+        ба́ловать в лесу́
         заруби́л себе́ я
         э́то на носу́""", "-A-A"),
 
@@ -2919,6 +2744,31 @@ if __name__ == '__main__':
         жестикули́руя нога́ми
         в лицо́""", "-A-A"),
 
+        ("""вчера́ столкну́лся с гру́ппой зо́мби
+        они́ шли в по́исках мозго́в
+        прошли́ и да́же не взгляну́ли
+        я ка́к оплё́ванный стою́""", "----"),
+
+        ("""я пред вели́чием споко́йным
+        блиста́ющих могу́чих а́льп
+        гото́в снять шля́пу да́же бо́льше
+        снять ска́льп""", "-A-A"),
+
+        ("""два ме́сяца я е́м лосо́ся
+        шесть ме́сяцев я е́м лося́
+        четы́ре ме́сяца сплю ла́пу
+        сося́""", "-A-A"),
+
+        ("""от пья́нства у́мер анато́лий
+        сконча́лся от обжо́рства гле́б
+        а пё́тр в тюрьме́ живо́й пьёт во́ду
+        ест хле́б""", "-A-A"),
+
+        ("""она́ ушла́ в суббо́ту у́тром
+        забра́в с собо́ю ли́шь кота́
+        а о́н пото́м еще́ два го́да
+        лил во́ду в блю́дце на полу́""", "----"),
+
         ("""я́ б сейча́с уе́хал
         к мо́рю на юга́
         но приме́рзла к пе́чке
@@ -2994,6 +2844,11 @@ if __name__ == '__main__':
         в гла́з чего́ нибу́дь
         за бревно́м не ви́жу
         к коммуни́зму пу́ть""", "-A-A"),
+
+        ("""не до чя́ со щя́ми
+        не до жы́ и шы́
+        е́сли в сре́дней шко́ле
+        па́шеш за грошы́""", "-A-A"),
     ]
 
 
