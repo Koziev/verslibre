@@ -6,16 +6,24 @@
 04.02.2022 Изменился API генерации затравок: теперь это класс SeedGenerator
 15.04.2022 Эксперимент с переключением доменов генерации: хайку или бусидо
 03.05.2022 Для бусидо сделан отдельный список саджестов
+10.07.2022 Добавлены новые разделы: приметы, афоризмы, шутки о жизни, о кошках, о детях, про Чака Норриса, про британских ученых
+15.10.2022 Добавлям пайплан обработки картинок вместо текстовых затравок для генерации
 """
 
 import io
 import os
 import argparse
 import logging.handlers
+import random
 import re
 import collections
+import pickle
 
 import numpy as np
+import torch
+from transformers import VisionEncoderDecoderModel, ViTFeatureExtractor, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM
+from PIL import Image
 
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
@@ -27,6 +35,7 @@ from antiplagiat import Antiplagiat
 from poetry_seeds import SeedGenerator
 from init_logging import init_logging
 from is_good_haiku import is_good_haiku
+from generative_poetry.thesaurus import Thesaurus
 
 
 def get_user_id(update: Update) -> str:
@@ -56,10 +65,17 @@ def start(update, context) -> None:
 
     keyboard = [[InlineKeyboardButton('хайку', callback_data='format=' + 'хайку')],
                 [InlineKeyboardButton('бусидо', callback_data='format=' + 'бусидо')],
+                [InlineKeyboardButton('приметы', callback_data='format=' + 'примета')],
+                [InlineKeyboardButton('про Чака Норриса', callback_data='format=' + 'Чак Норрис')],
+                [InlineKeyboardButton('про британских ученых', callback_data='format=' + 'британские ученые')],
+                #[InlineKeyboardButton('о детях', callback_data='format=' + 'дети')],
+                #[InlineKeyboardButton('о кошках', callback_data='format=' + 'кошки')],
+                #[InlineKeyboardButton('о жизни', callback_data='format=' + 'жизнь')],
+                #[InlineKeyboardButton('афоризмы', callback_data='format=' + 'афоризм')],
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b> и <b>бусидо</b> (версия от 08.05.2022).\n\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b>, <b>бусидо</b> и прочих коротких текстовых миниатюр (версия от 15.10.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
                              "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n"
                              "Выберите, что будем сочинять:\n",
@@ -91,14 +107,49 @@ def format_menu(context, callback_data):
         help_text = 'Включен режим <b>хайку</b>.\n\n' \
                     'Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
                     'и я сочиню хайку с этими словами. '
     elif user_format[user_id] == 'бусидо':
         help_text = 'Включен режим <b>бусидо</b>.\n\n' \
                     'Бусидо - это короткий афористичный текст с привкусом восточной мудрости.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
                     'и я сочиню бусидо с этими словами. '
+    elif user_format[user_id] == 'примета':
+        help_text = 'Включена генерация <b>примет</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>укол совести</i>, ' \
+                    'и я сочиню примету с этими словами. '
+    elif user_format[user_id] == 'Чак Норрис':
+        help_text = 'Включена генерация <b>шуток про Чака Норриса</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>скукоженный шкворень</i>, ' \
+                    'и я придумаю какую-нибудь шутку с этими словами и с упоминанием Чака Норриса :). '
+    elif user_format[user_id] == 'британские ученые':
+        help_text = 'Включена генерация <b>шуток про британских ученых</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>вирус кайфа</i>, ' \
+                    'и я придумаю какую-нибудь шутку с этими словами и с упоминанием британских ученых :). '
+    elif user_format[user_id] == 'дети':
+        help_text = 'Включена генерация <b>шуток про детей</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>школа</i>, ' \
+                    'и я придумаю какую-нибудь шутку про детей с этими словами. '
+    elif user_format[user_id] == 'кошки':
+        help_text = 'Включена генерация <b>шуток про кошек</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>диван</i>, ' \
+                    'и я придумаю какую-нибудь шутку про кошек с этими словами. '
+    elif user_format[user_id] == 'жизнь':
+        help_text = 'Включена генерация <b>шуток про жизнь</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зарплата</i>, ' \
+                    'и я придумаю какую-нибудь шутку про жизнь с этими словами. '
+    elif user_format[user_id] == 'афоризм':
+        help_text = 'Включена генерация <b>афоризмов</b>.\n\n' \
+                    'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
+                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>стальная решительность</i>, ' \
+                    'и я придумаю какой-нибудь афоризм с этими словами. '
     else:
         raise NotImplementedError()
 
@@ -206,6 +257,11 @@ def echo(update, context):
                             haikux2.append(haiku)
                     else:
                         logging.error('Bad busido generated: %s', haiku)
+                elif format in ('примета', 'афоризм', 'дети', 'жизнь', 'Чак Норрис', 'британские ученые', 'кошки'):
+                    p_plagiat = antiplagiat.score(haiku)
+                    logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku)
+                    if p_plagiat < 0.90:
+                        haikux2.append(haiku)
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
@@ -246,6 +302,197 @@ def echo(update, context):
         logging.error(ex)  # sys.exc_info()[0]
 
 
+def predict_step(image_paths):
+  images = []
+  for image_path in image_paths:
+    i_image = Image.open(image_path)
+    if i_image.mode != "RGB":
+      i_image = i_image.convert(mode="RGB")
+
+    images.append(i_image)
+
+  pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+  pixel_values = pixel_values.to(device)
+
+  max_length = 16
+  num_beams = 4
+  gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
+
+  output_ids = vit_model.generate(pixel_values, **gen_kwargs)
+
+  preds = vit_tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+  preds = [pred.strip() for pred in preds]
+  return preds
+
+
+def extract_constituent(head, parsing):
+    tx = [head]
+    for t in parsing:
+        if t.head == head.id:
+            tx.extend(extract_constituent(t, parsing))
+    return tx
+
+
+def extract_keywords(parsing):
+    keywords = set()
+    for t in parsing:
+        if t.upos in ('NOUN', 'PROPN', 'ADJ') and t.deprel == 'root':
+            # именное сказуемое
+            #keywords.add(t.lemma)
+            np = [t]
+            for t2 in parsing:
+                if t2.head == t.id:
+                    if t2.upos in ('ADJ', 'NOUN'):
+                        np.append(t2)
+                        for t3 in parsing:
+                            if t3.head == t2.id and t3.upos == 'ADP':
+                                np.append(t3)
+                    elif t2.upos == 'VERB':
+                        tx2 = extract_constituent(t2, parsing)
+                        if len(tx2) == 1:
+                            np.append(t2)
+
+            np = sorted(np, key=lambda z: int(z.id))
+            key = ' '.join(k.form for k in np)
+            return [key]
+        elif t.upos in ('NOUN', 'PROPN', 'ADJ'):
+            if t.head != 0:
+                if parsing[t.head].upos == 'VERB':
+                    if len(t.lemma) > 1:
+                        keywords.add(t.lemma)
+                elif t.deprel == 'appos' and parsing[t.head].upos in ('NOUN', 'PROPN'):
+                    key = parsing[t.head].lemma + ' ' + t.lemma
+                    keywords.add(key)
+        elif t.upos == 'VERB':
+            if len(t.lemma) > 1:
+                noun_hit = False
+                lx = thesaurus.get_linked(t.lemma, 'ГЛАГОЛ')
+                if lx:
+                    nouns = list(set(word2 for word2, pos2, rel in lx if pos2 == 'СУЩЕСТВИТЕЛЬНОЕ'))
+                    if nouns:
+                        keywords.add(random.choice(nouns))
+                        noun_hit = True
+
+                if not noun_hit:
+                    keywords.add(t.lemma)
+
+    return keywords
+
+
+def on_process_image(update, context):
+    try:
+        logging.info('Enter "on_process_image"')
+        user_id = get_user_id(update)
+        format = user_format.get(user_id, 'хайку')
+
+        context.bot.send_message(chat_id=update.message.chat_id, text='Рассматриваю картинку...')
+        best_photo = None
+        min_dist = 10000000
+        for photo in update.message.photo:
+            d = abs(512-photo.width) + abs(512-photo.height)
+            if d < min_dist:
+                best_photo = photo
+                min_dist = d
+
+        if best_photo is not None:
+            file_id = best_photo.file_id
+            file = context.bot.getFile(file_id)
+            #print("file_id: " + str(file_id))
+            download_path = os.path.join(tmp_dir, 'haiku_tg_image.jpg')
+            file.download(download_path)
+            en_caption = predict_step([download_path])[0]
+            logging.debug('Image caption for user_id="%s" decoded: "%s"', user_id, en_caption)
+
+            inputs = nllb_tokenizer(en_caption, return_tensors="pt").to(device)
+            translated_tokens = nllb_model.generate(**inputs, forced_bos_token_id=nllb_tokenizer.lang_code_to_id['rus_Cyrl'],  max_length=60)
+            ru_caption = nllb_tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
+            logging.debug('Russian translation of image caption for user_id="%s": "%s"', user_id, ru_caption)
+
+            # Извлечем ключевое слово, например - именную группу
+            keys = set()
+            for parsing in udpipe.parse_text(ru_caption):
+                keys.update(extract_keywords(parsing))
+
+            keys = sorted(keys, key=lambda z: (-z.count(' ') - len(z)//4))
+            wx = [1.0/i for i in range(1, len(keys)+1)]
+            seed = random.choices(population=keys, weights=wx, k=1)[0]
+
+            context.bot.send_message(chat_id=update.message.chat_id, text='Сочиняю текст...')
+
+            logging.info('Will generate a %s using seed="%s" for user="%s" id=%s in chat=%s', format, seed,
+                         update.message.from_user.name, user_id, str(update.message.chat_id))
+
+            haikux = haiku_generator.generate_output('[' + format + '] ' + seed, num_return_sequences=5)
+
+            haikux2 = []
+
+            for ipoem, haiku in enumerate(haikux, start=1):
+                if '|' in haiku:
+                    haiku = haiku.replace(' | ', '\n')
+
+                if format == 'хайку':
+                    if haiku.count('\n') == 2:
+                        if is_good_haiku(haiku):
+                            p_plagiat = antiplagiat.score(haiku)
+                            logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed,
+                                         user_id, p_plagiat, haiku.replace('\n', ' | '))
+                            if p_plagiat < 0.90:
+                                haikux2.append(haiku)
+                else:
+                    if format == 'бусидо':
+                        if is_good_busido(haiku, udpipe):
+                            p_plagiat = antiplagiat.score(haiku)
+                            logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed,
+                                         user_id, p_plagiat, haiku.replace('\n', ' | '))
+                            if p_plagiat < 0.90:
+                                haikux2.append(haiku)
+                        else:
+                            logging.error('Bad busido generated: %s', haiku)
+                    elif format in ('примета', 'афоризм', 'дети', 'жизнь', 'Чак Норрис', 'британские ученые', 'кошки'):
+                        p_plagiat = antiplagiat.score(haiku)
+                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed,
+                                     user_id, p_plagiat, haiku)
+                        if p_plagiat < 0.90:
+                            haikux2.append(haiku)
+
+            last_user_poems[user_id] = []
+            last_user_poem[user_id] = None
+
+            for ipoem, haiku in enumerate(haikux2, start=0):
+                if ipoem == 1:
+                    last_user_poem[user_id] = haiku
+                else:
+                    last_user_poems[user_id].append(haiku)
+
+            if last_user_poem[user_id]:
+                if len(last_user_poems[user_id]):
+                    keyboard = [[LIKE, DISLIKE, MORE, NEW]]
+                else:
+                    keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id, domain=format)]
+
+                reply_markup = ReplyKeyboardMarkup(keyboard,
+                                                   one_time_keyboard=True,
+                                                   resize_keyboard=True,
+                                                   per_user=True)
+
+                context.bot.send_message(chat_id=update.message.chat_id,
+                                         text=render_haiku_html(last_user_poem[user_id]),
+                                         reply_markup=reply_markup, parse_mode='HTML')
+            else:
+                keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
+                reply_markup = ReplyKeyboardMarkup(keyboard,
+                                                   one_time_keyboard=True,
+                                                   resize_keyboard=True,
+                                                   per_user=True)
+
+                context.bot.send_message(chat_id=update.message.chat_id,
+                                         text='Что-то не получается сочинить :(\nЗадайте другую тему или пришлите другую картинку, пожалуйста',
+                                         reply_markup=reply_markup)
+    except Exception as ex:
+        logging.error('Error in "on_process_image"')
+        logging.error(ex)
+
+
 def is_good_busido(busido_text, parser):
     parsings = parser.parse_text(busido_text)
     for parsing in parsings:
@@ -253,7 +500,7 @@ def is_good_busido(busido_text, parser):
         for t in parsing:
             if t.upos in ('PROPN', 'NOUN'):
                 noun_freqs[t.lemma] += 1
-        if len(noun_freqs) > 1 and noun_freqs.most_common(1)[0][1] > 1:
+        if len(noun_freqs) > 1 and noun_freqs.most_common(1)[0][1] > 2:
             return False
     return True
 
@@ -264,7 +511,8 @@ if __name__ == '__main__':
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split())
     parser.add_argument('--models_dir', type=str, default='../../models')
     parser.add_argument('--dataset_path', type=str)
-    parser.add_argument('--log', type=str, default='../../tmp/haiku_generator.log')
+    parser.add_argument('--log', type=str, default='~/polygon/text_generator/tmp/haiku_generator.log')
+    parser.add_argument('--tmp', type=str, default='~/polygon/text_generator/tmp')
 
     args = parser.parse_args()
 
@@ -273,10 +521,9 @@ if __name__ == '__main__':
     models_dir = os.path.expanduser(args.models_dir)
     dataset_path = os.path.expanduser(args.dataset_path) if args.dataset_path else None
 
-    #logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    #logging.getLogger().setLevel(logging.DEBUG)
-    #logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-    init_logging(args.log, True)
+    tmp_dir = os.path.expanduser(args.tmp)
+
+    init_logging(os.path.expanduser(args.log), True)
 
     # Для работы с сервером телеграмма нужен зарегистрированный бот.
     # Результатом регистрации является токен - уникальная строка символов.
@@ -307,13 +554,33 @@ if __name__ == '__main__':
     else:
         logging.error('Antiplagiat dataset is not available')
 
-    logging.info('Loading the models from "%s"...', models_dir)
+    logging.info('Loading image processing models...')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Модели для обработки картинок
+    logging.info('Start loading image captioning model')
+    vit_model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    feature_extractor = ViTFeatureExtractor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    vit_tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    vit_model.to(device)
+
+    logging.info('Start loading NLLB model')
+    nllb_tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
+    nllb_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M")
+    nllb_model.to(device)
+
+    logging.info('Loading the text generation models from "%s"...', models_dir)
     haiku_generator = RugptGenerator()
     haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
 
     # Парсер будет нужен для отсева текстов бусидо с повторами.
     udpipe = UdpipeParser()
     udpipe.load(models_dir)
+
+    thesaurus_path = os.path.join(tmp_dir, 'thesaurus.pkl')
+    with open(thesaurus_path, 'rb') as f:
+        thesaurus = pickle.load(f)
+
 
     if mode == 'telegram':
         logging.info('Starting telegram bot')
@@ -334,6 +601,9 @@ if __name__ == '__main__':
         echo_handler = MessageHandler(Filters.text, echo)
         dispatcher.add_handler(echo_handler)
 
+        img_handler = MessageHandler(Filters.photo, on_process_image)
+        dispatcher.add_handler(img_handler)
+
         logging.getLogger('telegram.bot').setLevel(logging.INFO)
         logging.getLogger('telegram.vendor.ptb_urllib3.urllib3.connectionpool').setLevel(logging.INFO)
 
@@ -351,10 +621,17 @@ if __name__ == '__main__':
             print('[1] - бусидо')
             print('[2] - приметы')
             print('[3] - афоризмы')
-            print('[4] - миниатюры')
+            print('[4] - шутки о жизни')
+            print('[5] - шутки о кошках')
+            print('[6] - шутки о детях')
+            print('[7] - шутки про Чака Норриса')
+            print('[8] - шутки про британских ученых')
+            print('[9] - поговорки')
+            print('[10] - календарь')
+            print('[11] - миниатюры')
             i = input(':> ').strip()
-            if i in '01234':
-                format = 'хайку бусидо примета афоризм миниатюра'.split()[int(i)]
+            if 0 <= int(i) <= 10:
+                format = 'хайку|бусидо|примета|афоризм|о жизни|кошки|дети|Чак Норрис|британские ученые|поговорка|календарь|миниатюра'.split('|')[int(i)]
             else:
                 print('Неверный выбор!')
 
