@@ -8,6 +8,7 @@
 03.05.2022 Для бусидо сделан отдельный список саджестов
 10.07.2022 Добавлены новые разделы: приметы, афоризмы, шутки о жизни, о кошках, о детях, про Чака Норриса, про британских ученых
 15.10.2022 Добавлям пайплан обработки картинок вместо текстовых затравок для генерации
+22.10.2022 Расширение фильтра повторов для бусидо; перегенерация с повышением температуры в случае, если после фильтров не осталось ни одного варианта
 """
 
 import io
@@ -77,7 +78,8 @@ def start(update, context) -> None:
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b>, <b>бусидо</b> и прочих коротких текстовых миниатюр (версия от 15.10.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
-                             "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n"
+                             "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n"
+                             "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
                              "Выберите, что будем сочинять:\n",
                              reply_markup=reply_markup, parse_mode='HTML')
 
@@ -233,35 +235,48 @@ def echo(update, context):
         seed = update.message.text
         logging.info('Will generate a %s using seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
-        haikux = haiku_generator.generate_output('['+format+'] '+seed, num_return_sequences=5)
-
         haikux2 = []
 
-        for ipoem, haiku in enumerate(haikux, start=1):
-            if '|' in haiku:
-                haiku = haiku.replace(' | ', '\n')
+        # 22.10.2022 повторяем попытки генерации с повышением температуры до тех пор, пока через фильтры не пройдет хотя бы 1 вариант.
+        temperature = 1.0
+        max_temperature = 1.8
+        while temperature <= max_temperature:
+            haikux = haiku_generator.generate_output('['+format+'] '+seed, num_return_sequences=5, temperature=temperature)
 
-            if format == 'хайку':
-                if haiku.count('\n') == 2:
-                    if is_good_haiku(haiku):
+            for ipoem, haiku in enumerate(haikux, start=1):
+                if '|' in haiku:
+                    haiku = haiku.replace(' | ', '\n')
+
+                if format == 'хайку':
+                    if haiku.count('\n') == 2:
+                        if is_good_haiku(haiku):
+                            p_plagiat = antiplagiat.score(haiku)
+                            logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                            if p_plagiat < 0.90:
+                                haikux2.append(haiku)
+                else:
+                    if format == 'бусидо':
+                        if is_good_busido(haiku, udpipe):
+                            p_plagiat = antiplagiat.score(haiku)
+                            logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                            if p_plagiat < 0.90:
+                                haikux2.append(haiku)
+                        else:
+                            logging.error('Bad busido generated: %s', haiku)
+                    elif format in ('примета', 'афоризм', 'дети', 'жизнь', 'Чак Норрис', 'британские ученые', 'кошки'):
                         p_plagiat = antiplagiat.score(haiku)
-                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
+                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku)
                         if p_plagiat < 0.90:
                             haikux2.append(haiku)
-            else:
-                if format == 'бусидо':
-                    if is_good_busido(haiku, udpipe):
-                        p_plagiat = antiplagiat.score(haiku)
-                        logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku.replace('\n', ' | '))
-                        if p_plagiat < 0.90:
-                            haikux2.append(haiku)
-                    else:
-                        logging.error('Bad busido generated: %s', haiku)
-                elif format in ('примета', 'афоризм', 'дети', 'жизнь', 'Чак Норрис', 'британские ученые', 'кошки'):
-                    p_plagiat = antiplagiat.score(haiku)
-                    logging.info('%s #%d for seed="%s" user_id=%s p_plagiat=%5.3f: %s', format, ipoem, seed, user_id, p_plagiat, haiku)
-                    if p_plagiat < 0.90:
-                        haikux2.append(haiku)
+
+            if haikux2:
+                break
+
+            temperature *= 1.2
+            logging.info('Rising temperature to %f and trying again with format="%s" seed="%s" for user="%s" id=%s in chat=%s', temperature, format, seed, user_id)
+
+        if len(haikux2) == 0:
+            logging.info('Could not generate a poem for format="%s" seed="%s" user="%s"', format, seed, user_id)
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
@@ -498,10 +513,11 @@ def is_good_busido(busido_text, parser):
     for parsing in parsings:
         noun_freqs = collections.Counter()
         for t in parsing:
-            if t.upos in ('PROPN', 'NOUN'):
-                noun_freqs[t.lemma] += 1
-        if len(noun_freqs) > 1 and noun_freqs.most_common(1)[0][1] > 2:
+            if t.upos in ('PROPN', 'NOUN', 'VERB', 'ADJ', 'INTJ', 'SYM'):
+                noun_freqs[t.lemma.lower().replace('ё', 'е')] += 1
+        if noun_freqs.most_common(1)[0][1] > 2:
             return False
+
     return True
 
 
@@ -580,7 +596,6 @@ if __name__ == '__main__':
     thesaurus_path = os.path.join(tmp_dir, 'thesaurus.pkl')
     with open(thesaurus_path, 'rb') as f:
         thesaurus = pickle.load(f)
-
 
     if mode == 'telegram':
         logging.info('Starting telegram bot')
