@@ -16,6 +16,7 @@ End-2-end генерация рифмованного четверостишья
 08.05.2022 Из телеграм-версии исключен режим моностихов
 24.05.2022 Добавлен второй уровень рубрикации четверостиший - выделены рубаи, частушки, мистика и т.д.
 27.05.2022 В режиме генерации рубаи не делается продолжение (след. 4 строки по первым 4м)
+22.10.2022 Реализован повтор попыток генерации с повышенной температурой, если все сгенерированные варианты отсеяны фильтрами качества
 """
 
 import os
@@ -87,9 +88,10 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 31.08.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 22.10.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
-                                  "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n\n" +
+                                  "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
+                                  "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
                                   "Выберите формат сочиняемых стихов:\n",
                              reply_markup=reply_markup)
     logging.debug('Leaving START callback with user_id=%s', user_id)
@@ -271,7 +273,19 @@ def echo(update, context):
         seed = update.message.text
         logging.info('Will generate a poem using format="%s" seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
-        poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed)]
+        # 22.10.2022 Если генерация ничего не дала (например, все сгенерированные варианты не прошли фильтры),
+        # то увеличиваем температуру и повторяем.
+        temperature = 1.0
+        max_temperature = 1.8
+        while temperature <= max_temperature:
+            poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed, temperature=temperature)]
+            if len(poems2) > 0:
+                break
+            temperature *= 1.2
+            logging.info('Rising temperature to %f and trying again with seed="%s" for user="%s" id=%s in chat=%s', temperature, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
+
+        if len(poems2) == 0:
+            logging.info('Could not generate a poem for seed="%s" for user="%s" id=%s in chat=%s', seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
         last_user_poems[user_id] = []
         last_user_poem[user_id] = None
