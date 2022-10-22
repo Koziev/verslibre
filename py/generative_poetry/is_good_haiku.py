@@ -32,4 +32,9 @@ def is_good_haiku(s):
             if t1 == t3 and t1 not in ('еще', 'ещё', 'снова', 'вновь', 'сильнее') and t2 == 'и':
                 return False
 
+        # Ловим повторы типа XXX XXX
+        for t1, t2 in zip(tokens, tokens[1:]):
+            if t1 == t2:
+                return False
+
     return True
