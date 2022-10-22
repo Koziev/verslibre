@@ -651,6 +651,9 @@ class LineStressVariant(object):
         self.rhyming_tail = RhymingTail(unstressed_prefix, stressed_word, unstressed_postfix_words)
 
     def __repr__(self):
+        if self.poetry_line == '':
+            return ''
+
         s = '〚' + ' '.join(w.__repr__() for w in self.stressed_words) + '〛'
         if self.total_score != 1.0:
             s += '({:5.3f})'.format(self.total_score)
@@ -1569,17 +1572,29 @@ class PoetryStressAligner(object):
 
         return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme=rhyme_scheme)
 
-    def detect_repeating(self, alignment):
-        # Иногда генеративная модель выдает повторы существтельных типа "любовь и любовь" в одной строке.
+    def detect_repeating(self, alignment, strict=False):
+        # Иногда генеративная модель выдает повторы существительных типа "любовь и любовь" в одной строке.
         # Такие генерации выглядят криво.
         # Данный метод детектирует повтор леммы существительного в строке.
+        # 22.10.2022 добавлен учет глаголов и прилагательных
         for pline in alignment.poetry_lines:
             n_lemmas = collections.Counter()
             for pword in pline.poetry_line.pwords:
-                if pword.upos in ('NOUN', 'PROPN'):
+                if pword.upos in ('NOUN', 'PROPN', 'ADJ', 'VERB'):
+                    n_lemmas[pword.lemma] += 1
+                elif strict and pword.upos in ('ADV', 'PRON', 'SYM'):
                     n_lemmas[pword.lemma] += 1
             if n_lemmas and n_lemmas.most_common(1)[0][1] > 1:
                 return True
+
+            if strict:
+                # Повтор слова длиннее 4 букв тоже считаем плохим
+                n_forms = collections.Counter()
+                for pword in pline.poetry_line.pwords:
+                    if len(pword.form) >= 5:
+                        n_forms[pword.upos + ':' + pword.form.lower().replace('ё', 'е')] += 1
+                if n_forms and n_forms.most_common(1)[0][1] > 1:
+                    return True
 
             # любой повтор XXX XXX
             for w1, w2 in zip(pline.poetry_line.pwords, pline.poetry_line.pwords[1:]):

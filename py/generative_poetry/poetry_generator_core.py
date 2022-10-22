@@ -8,6 +8,7 @@
 25.05.2022 Для частушек (или возможно других жанров) в конце строк не отсекаются знаки препинания, поэтому не считаем
            повтором рифмовки ситуацию повтора пунктуатора перед <nl>
 27.05.2022 В режиме генерации рубаи наказываются схемы рифмовки не-AABA
+22.10.2022 Отбрасываем генерации, в которых появляются подстроки типа <s>
 """
 
 import os
@@ -58,7 +59,6 @@ from generative_poetry.experiments.rugpt_with_stress.arabize import arabize
 from generative_poetry.experiments.rugpt_with_stress.stressed_gpt_tokenizer import StressedGptTokenizer
 from generative_poetry.whitespace_normalization import normalize_whitespaces
 from generative_poetry.metre_classifier import get_syllables
-
 
 
 upper_cyr = 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'
@@ -523,12 +523,16 @@ class RugptGenerator:
         self.model.to(self.device)
         self.model.eval()
 
-    def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40, positive_words=None, negative_words=None):
+    def generate_output(self, context, num_return_sequences=10,
+                        method='sampling',
+                        temperature=1.0,
+                        top_k=30,
+                        top_p=0.40,
+                        typical_p=1.0,
+                        num_beams=None,
+                        positive_words=None, negative_words=None):
         global logits_booster
 
-        #top_k = 30
-        #top_p = 0.85
-        #top_p = 0.40
         repetition_penalty = 1.0
         prompt_text = "<s> " + context + ' $'
         stop_token = "</s>"
@@ -572,15 +576,18 @@ class RugptGenerator:
             logits_booster = None
         # 15-05-2022 КОНЕЦ ЭКСПЕРИМЕНТА
 
+        do_sample = method in ['sampling', 'typical decoding']
+
         output_sequences = self.model.generate(
             input_ids=encoded_prompt,
             max_length=max_len,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
             repetition_penalty=repetition_penalty,
-            do_sample=True,
-            #num_beams=5,
+            do_sample=do_sample,
+            temperature=temperature if do_sample else None,
+            top_k=top_k if do_sample else None,
+            top_p=top_p if do_sample else None,
+            typical_p=typical_p if method == 'typical decoding' else 1.0,
+            num_beams=num_beams if method == 'beam search' else None,
             #num_beam_groups=5,
             num_return_sequences=num_return_sequences,
             pad_token_id=0,
@@ -669,16 +676,20 @@ class RugptGenerator8(RugptGenerator):
 
 
 class PoetryGeneratorCore(object):
-    def __init__(self):
+    def __init__(self, using_stresses=True):
         self.poem_generator = None
         self.poem8_generator = None
         self.udpipe = None
         self.accents = None
         self.aligner = None
+        self.using_stresses = using_stresses
 
-    def load(self, models_dir, data_dir, tmp_dir):
+    def load(self, models_dir, data_dir, tmp_dir, poetry_generator_model_path=None):
         self.poem_generator = RugptGenerator()
-        self.poem_generator.load(os.path.join(models_dir, 'stressed_poetry_generator'))
+        if poetry_generator_model_path is None:
+            self.poem_generator.load(os.path.join(models_dir, 'stressed_poetry_generator'))
+        else:
+            self.poem_generator.load(poetry_generator_model_path)
 
         self.poem8_generator = RugptGenerator8()
         self.poem8_generator.load(os.path.join(models_dir, 'stressed_8liner_generator'))
@@ -692,17 +703,45 @@ class PoetryGeneratorCore(object):
 
         self.aligner = PoetryStressAligner(self.udpipe, self.accents, os.path.join(data_dir, 'poetry', 'dict'))
 
-    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30, positive_words=None, negative_words=None,
-                       temperature=1.0, top_p=0.5, top_k=30):
+    def detect_bad_substring(self, text):
+        if any((s in text) for s in ['<s>']):
+            return True
+        return False
+
+    def generate_poems(self, format, topic, verbosity=1, num_return_sequences=30,
+                       positive_words=None, negative_words=None,
+                       method='sampling', temperature=1.0, top_p=0.5, top_k=30, typical_p=1.0, num_beams=None):
+        # НАЧАЛО ОТЛАДКИ
+        #text = 'скажите ктулху так назвали ктулху'
+        #a = self.aligner.align([text], check_rhymes=False)
+        #r = self.aligner.detect_repeating(a, strict=True)
+        # КОНЕЦ ОТЛАДКИ
+
         try:
-            seed = arabize(break_to_syllables(self.udpipe, self.accents, format + ' , ' + topic))
+            if self.using_stresses:
+                seed = arabize(break_to_syllables(self.udpipe, self.accents, format + ' , ' + topic))
+            else:
+                seed = format + ' , ' + topic
+                seed_tokens = []
+                for word in seed.split(' '):
+                    if seed_tokens:
+                        seed_tokens.append('|')
+                    for s in get_syllables(word):
+                        seed_tokens.append(s.text)
+
+                seed_tokens = seed_tokens[::-1]
+                seed = ' '.join(seed_tokens)
+
             poems = self.poem_generator.generate_output(seed,
                                                         num_return_sequences=num_return_sequences,
                                                         positive_words=positive_words,
                                                         negative_words=negative_words,
+                                                        method=method,
+                                                        num_beams=num_beams,
                                                         temperature=temperature,
                                                         top_p=top_p,
-                                                        top_k=top_k)
+                                                        top_k=top_k,
+                                                        typical_p=typical_p)
         except Exception as ex:
             logging.error(ex)
             return []
@@ -712,9 +751,11 @@ class PoetryGeneratorCore(object):
         # ===============================================================
         ranked_poems = []
 
+        prohibit_repetition = False  # полностью пресекать повтор леммы глагола и существительного (кроме некоторых служебных)
+
         if format in 'лирика|детский стишок|философия|юмор|мистика'.split('|'):
             do_check_rhymes = True
-            score_threshold = 0.05
+            score_threshold = 0.10
             lines_count = 4
         elif format in 'рубаи|частушка|Филатов|Пушкин|Крылов'.split('|'):
             do_check_rhymes = False
@@ -723,11 +764,13 @@ class PoetryGeneratorCore(object):
         else:
             # для моностихов, двустрочников и порошков рифмовку не проверяем!
             do_check_rhymes = False
-            score_threshold = 0.0
+            score_threshold = 0.10
             if format == 'одностишье':
                 lines_count = 1
+                prohibit_repetition = True
             elif format == 'двустишье':
                 lines_count = 2
+                prohibit_repetition = True
             elif format == 'порошок':
                 lines_count = 4
             else:
@@ -740,6 +783,9 @@ class PoetryGeneratorCore(object):
             if len(lines) == lines_count:
                 score = 0.0
                 try:
+                    if any(self.detect_bad_substring(line) for line in lines):
+                        continue
+
                     a = self.aligner.align(lines, check_rhymes=do_check_rhymes)
                     if a is not None:
                         if a.rhyme_scheme == '----' and do_check_rhymes:
@@ -768,7 +814,10 @@ class PoetryGeneratorCore(object):
                     logging.error('Exception: %s', str(e) + '\n' + traceback.format_exc() + '\n')
 
                 if score >= score_threshold:
-                    ranked_poems.append((lines, score))
+                    if prohibit_repetition and self.aligner.detect_repeating(a, strict=True):
+                        logging.warning('Prohibited repetition detected: %s', a.get_unstressed_lines().replace('\n', ' | '))
+                    else:
+                        ranked_poems.append((lines, score))
                 elif score == 0.0:
                     if verbosity > 0:
                         logging.info('@451 === BAD GENERATION ===')
