@@ -970,6 +970,13 @@ class PoetryAlignment(object):
         return s
 
     @staticmethod
+    def build_n4(alignments4, total_score):
+        poetry_lines = []
+        for a in alignments4:
+            poetry_lines.extend(a.poetry_lines)
+        return PoetryAlignment(poetry_lines, total_score, alignments4[0].meter, alignments4[0].rhyme_scheme)
+
+    @staticmethod
     def build_no_rhyming_result(poetry_lines):
         a = PoetryAlignment(poetry_lines, 0.0, None, None)
         a.error_text = 'Отсутствует рифмовка последних слов'
@@ -1198,18 +1205,54 @@ class PoetryStressAligner(object):
         # Иногда для наглядности можем выводить сгенерированные стихи вместе со значками ударения.
         # Эти значки мешают работе алгоритма транскриптора, поэтому уберем их сейчас.
         lines = [line.replace('\u0301', '') for line in lines0]
-
-        if len(lines) == 2:
+        nlines = len(lines)
+        if nlines == 2:
             return self.align2(lines, check_rhymes)
-        elif len(lines) == 4:
+        elif nlines == 4:
             return self.align4(lines, check_rhymes)
-        elif len(lines) == 1:
+        elif nlines == 1:
             return self.align1(lines)
         else:
+            n4 = (nlines - 1) // 4
+            if nlines == (n4*4 + 1):
+                # Считаем, что перед нами несколько блоков по 4 строки, разделенные пустой строкой
+                return self.align_n4(lines, check_rhymes)
+
             if not check_rhymes:
                 return self.align_without_rhyming(lines)
 
             raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
+
+    def align_n4(self, lines, check_rhymes):
+        total_score = 1.0
+        blocks = []
+        block = []
+        block_alignments = []
+        for line in lines + ['']:
+            if line:
+                block.append(line)
+            else:
+                blocks.append(block)
+                block = []
+
+        for block in blocks:
+            assert(len(block) == 4)
+
+            alignment = self.align4(block, check_rhymes=check_rhymes)
+            if alignment is None:
+                total_score = 0.0
+                break
+
+            block_score = alignment.score
+            if self.detect_poor_poetry(alignment):
+                block_score *= 0.1
+
+            # TODO: штрафовать за разные виды метра в блоках?
+
+            total_score *= block_score
+            block_alignments.append(alignment)
+
+        return PoetryAlignment.build_n4(block_alignments, total_score)
 
     def check_rhyming(self, rhyming_tail1, rhyming_tail2):
         if not rhyming_tail1.is_ok() or not rhyming_tail2.is_ok():

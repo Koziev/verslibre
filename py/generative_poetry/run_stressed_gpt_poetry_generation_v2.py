@@ -17,6 +17,7 @@ End-2-end генерация рифмованного четверостишья
 24.05.2022 Добавлен второй уровень рубрикации четверостиший - выделены рубаи, частушки, мистика и т.д.
 27.05.2022 В режиме генерации рубаи не делается продолжение (след. 4 строки по первым 4м)
 22.10.2022 Реализован повтор попыток генерации с повышенной температурой, если все сгенерированные варианты отсеяны фильтрами качества
+23.10.2022 Эксперимент с отдельной моделью для генерации длинных стихов: LongPoetryGenerator
 """
 
 import os
@@ -29,9 +30,10 @@ import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
-from init_logging import init_logging
-from poetry_seeds import SeedGenerator
-from poetry_generator_core import PoetryGeneratorCore
+from generative_poetry.init_logging import init_logging
+from generative_poetry.poetry_seeds import SeedGenerator
+from generative_poetry.poetry_generator_core import PoetryGeneratorCore
+from generative_poetry.long_poems_generator import LongPoemGeneratorCore
 
 
 def get_user_id(update: Update) -> str:
@@ -63,7 +65,7 @@ FORMAT__RUBAI = 'Рубаи'
 FORMAT__KID = "Для детей"
 FORMAT__PHIL = "Философские"
 FORMAT__HUM = "Юмор и сатира"
-FORMAT__MIST = "Мистика"
+#FORMAT__MIST = "Мистика"   23.10.2022 мистика объединилась с лирикой в новой модели генерации длинных стихов
 FORMAT__FOLK = "Частушки"
 
 
@@ -79,7 +81,7 @@ def start(update, context) -> None:
                 [InlineKeyboardButton(FORMAT__PHIL, callback_data='format=' + FORMAT__PHIL)],
                 [InlineKeyboardButton(FORMAT__HUM, callback_data='format=' + FORMAT__HUM)],
                 [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format=' + FORMAT__RUBAI)],
-                [InlineKeyboardButton(FORMAT__MIST, callback_data='format=' + FORMAT__MIST)],
+                #[InlineKeyboardButton(FORMAT__MIST, callback_data='format=' + FORMAT__MIST)],
                 [InlineKeyboardButton(FORMAT__FOLK, callback_data='format=' + FORMAT__FOLK)],
                 [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
                 [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
@@ -88,7 +90,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 22.10.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 23.10.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
                                   "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
@@ -241,7 +243,9 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
             poem = last_user_poems[user_id][-1]
 
-            if format in 'лирика|детский стишок|философия|юмор|мистика'.split('|'):
+            # 23.10.2022 исключил лирику и мистику из списка, так как теперь она будет генерироваться новой модель.
+            # TODO: исключить остальные стихи тоже
+            if format in 'детский стишок|философия|юмор'.split('|'):
                 poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
@@ -278,7 +282,12 @@ def echo(update, context):
         temperature = 1.0
         max_temperature = 1.8
         while temperature <= max_temperature:
-            poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed, temperature=temperature)]
+            if format in 'лирика'.split('|'):
+                # 23.10.2022 отдельная модель для длинных стихов
+                poems2 = [('\n'.join(lines), score) for lines, score in long_poetry_generator.generate_poems(format, seed, temperature=temperature)]
+            else:
+                poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed, temperature=temperature)]
+
             if len(poems2) > 0:
                 break
             temperature *= 1.2
@@ -351,6 +360,10 @@ if __name__ == '__main__':
     poetry_generator = PoetryGeneratorCore()
     poetry_generator.load(models_dir, data_dir, tmp_dir)
 
+    # 23.10.2022
+    long_poetry_generator = LongPoemGeneratorCore()
+    long_poetry_generator.load(models_dir, data_dir, tmp_dir)
+
     if args.mode == 'telegram':
         telegram_token = args.token
         if len(telegram_token) == 0:
@@ -396,10 +409,9 @@ if __name__ == '__main__':
 6 - философия
 7 - юмор
 8 - рубаи
-9 - мистика
-10 - частушка
-11 - Филатов
-12 - Пушкин
+9 - частушка
+10 - Филатов
+11 - Пушкин
 """
         print(menu)
         format = None
@@ -422,12 +434,10 @@ if __name__ == '__main__':
             elif s == '8':
                 format = 'рубаи'
             elif s == '9':
-                format = 'мистика'
-            elif s == '10':
                 format = 'частушка'
-            elif s == '11':
+            elif s == '10':
                 format = 'Филатов'
-            elif s == '12':
+            elif s == '11':
                 format = 'Пушкин'
             else:
                 print('Некорректный вариант!')
@@ -438,12 +448,16 @@ if __name__ == '__main__':
         while True:
             topic = input(':> ').strip()
 
-            ranked_poems = poetry_generator.generate_poems(format, topic, num_return_sequences=5)
+            if format in 'лирика'.split('|'):
+                # 23.10.2022 лирика генерится отдельной моделью
+                ranked_poems = long_poetry_generator.generate_poems(format, topic, num_return_sequences=5)
+            else:
+                ranked_poems = poetry_generator.generate_poems(format, topic, num_return_sequences=5)
 
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
 
-                if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
+                if format in 'детский стишок|философия|юмор|частушка'.split('|'):
                     poem = poetry_generator.continue8(poem)
 
                 for line in poem:
