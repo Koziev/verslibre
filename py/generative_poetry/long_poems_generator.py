@@ -642,7 +642,23 @@ class LongPoemGeneratorCore(object):
             try:
                 a = self.aligner.align(lines, check_rhymes=True)
                 if a is not None and a.score >= threshold_score:
-                    ranked_poems.append((lines, a.score))
+                    score = a.score
+
+                    if a.rhyme_scheme == 'AAAA':
+                        # штрафуем за ситуацию, когда все строки между собой зарифмованы
+                        score *= 0.5
+
+                    if self.aligner.detect_repeating(a):
+                        # Генерации с повторами штрафуем.
+                        logging.warning('Repetition detected: %s', a.get_stressed_lines().replace('\n', '|'))
+                        score = 0.5 * score
+
+                    if self.aligner.detect_poor_poetry(a):
+                        # штрафуем за бедную рифмовку
+                        score *= 0.5
+
+                    if score > 0.20:
+                        ranked_poems.append((lines, score))
             except Exception as ex:
                 logging.error(ex)
                 continue

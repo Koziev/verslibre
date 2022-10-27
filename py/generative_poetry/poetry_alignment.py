@@ -1616,6 +1616,13 @@ class PoetryStressAligner(object):
         return PoetryAlignment(stressed_lines, score, mapped_meter, rhyme_scheme=rhyme_scheme)
 
     def detect_repeating(self, alignment, strict=False):
+        # Повтор последних слов в разных строках
+        last_words = [pline.get_rhyming_tail().stressed_word.form.lower() for pline in alignment.poetry_lines]
+        for i1, word1 in enumerate(last_words):
+            for word2 in last_words[i1+1:]:
+                if word1 == word2:
+                    return True
+
         # Иногда генеративная модель выдает повторы существительных типа "любовь и любовь" в одной строке.
         # Такие генерации выглядят криво.
         # Данный метод детектирует повтор леммы существительного в строке.
@@ -1674,15 +1681,25 @@ class PoetryStressAligner(object):
         elif alignment.rhyme_scheme == 'AABB':
             rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[1].get_rhyming_tail()))
             rhyme_pairs.append((alignment.poetry_lines[2].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
+        elif alignment.rhyme_scheme == 'AAAA':
+            rhyme_pairs.append((alignment.poetry_lines[0].get_rhyming_tail(), alignment.poetry_lines[1].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[1].get_rhyming_tail(), alignment.poetry_lines[2].get_rhyming_tail()))
+            rhyme_pairs.append((alignment.poetry_lines[2].get_rhyming_tail(), alignment.poetry_lines[3].get_rhyming_tail()))
 
         for tail1, tail2 in rhyme_pairs:
             word1 = tail1.stressed_word
             word2 = tail2.stressed_word
+
+            form1 = word1.poetry_word.form.lower()
+            form2 = word2.poetry_word.form.lower()
+
+            if form1 == form2:
+                # банальный повтор слова
+                return True
+
             if word1.poetry_word.upos == 'VERB' and word2.poetry_word.upos == 'VERB':
                 # 11-01-2022 если пара слов внесена в специальный список рифмующихся слов, то считаем,
                 # что тут все нормально:  ВИТАЮ-ТАЮ
-                form1 = word1.poetry_word.form.lower()
-                form2 = word2.poetry_word.form.lower()
                 if (form1, form2) in self.accentuator.rhymed_words:
                     continue
 

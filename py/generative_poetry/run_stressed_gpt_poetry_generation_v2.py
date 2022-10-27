@@ -18,6 +18,7 @@ End-2-end генерация рифмованного четверостишья
 27.05.2022 В режиме генерации рубаи не делается продолжение (след. 4 строки по первым 4м)
 22.10.2022 Реализован повтор попыток генерации с повышенной температурой, если все сгенерированные варианты отсеяны фильтрами качества
 23.10.2022 Эксперимент с отдельной моделью для генерации длинных стихов: LongPoetryGenerator
+27.10.2022 Если генерация в модели long poems ничего не дала, запускаем генерацию в старой модели 4-строчников.
 """
 
 import os
@@ -90,7 +91,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 23.10.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 27.10.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
                                   "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
@@ -245,8 +246,8 @@ def echo(update, context):
 
             # 23.10.2022 исключил лирику и мистику из списка, так как теперь она будет генерироваться новой модель.
             # TODO: исключить остальные стихи тоже
-            if format in 'детский стишок|философия|юмор'.split('|'):
-                poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
+            #if format in 'детский стишок|философия|юмор'.split('|'):
+            #    poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
             last_user_poems[user_id] = last_user_poems[user_id][:-1]
@@ -280,12 +281,19 @@ def echo(update, context):
         # 22.10.2022 Если генерация ничего не дала (например, все сгенерированные варианты не прошли фильтры),
         # то увеличиваем температуру и повторяем.
         temperature = 1.0
-        max_temperature = 1.8
+        max_temperature = 1.6
         while temperature <= max_temperature:
+            poems2 = []
             if format in 'лирика'.split('|'):
                 # 23.10.2022 отдельная модель для длинных стихов
-                poems2 = [('\n'.join(lines), score) for lines, score in long_poetry_generator.generate_poems(format, seed, temperature=temperature)]
-            else:
+                poems = long_poetry_generator.generate_poems(format, seed, temperature=temperature, num_return_sequences=10)
+                poems2 = [('\n'.join(lines), score) for lines, score in poems]
+            elif format == 'детский стишок':
+                poems = long_poetry_generator.generate_poems('стихи для детей', seed, temperature=temperature, num_return_sequences=10)
+                poems2 = [('\n'.join(lines), score) for lines, score in poems]
+
+            if len(poems2) == 0:
+                logging.debug('Using base model for generation with format="%s" seed="%s"', format, seed)
                 poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed, temperature=temperature)]
 
             if len(poems2) > 0:
@@ -301,8 +309,8 @@ def echo(update, context):
 
         for ipoem, (poem, score) in enumerate(poems2, start=1):
             if ipoem == 1:
-                if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
-                    poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
+                #if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
+                #    poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
                 last_user_poem[user_id] = poem
             else:
@@ -406,17 +414,16 @@ if __name__ == '__main__':
 3 - порошки и пирожки
 4 - лирика
 5 - детский стишок
-6 - философия
-7 - юмор
-8 - рубаи
-9 - частушка
-10 - Филатов
-11 - Пушкин
+6 - юмор
+7 - рубаи
+8 - частушка
+9 - Филатов
+10 - Пушкин
 """
         print(menu)
         format = None
         while not format:
-            s = input('1 ... 11 :> ').strip()
+            s = input('1 ... 10 :> ').strip()
             if s == '1':
                 format = 'одностишье'
             elif s == '2':
@@ -428,16 +435,14 @@ if __name__ == '__main__':
             elif s == '5':
                 format = 'детский стишок'
             elif s == '6':
-                format = 'философия'
-            elif s == '7':
                 format = 'юмор'
-            elif s == '8':
+            elif s == '7':
                 format = 'рубаи'
-            elif s == '9':
+            elif s == '8':
                 format = 'частушка'
-            elif s == '10':
+            elif s == '9':
                 format = 'Филатов'
-            elif s == '11':
+            elif s == '10':
                 format = 'Пушкин'
             else:
                 print('Некорректный вариант!')
@@ -448,17 +453,23 @@ if __name__ == '__main__':
         while True:
             topic = input(':> ').strip()
 
-            if format in 'лирика'.split('|'):
+            ranked_poems = []
+            if format == 'лирика':
                 # 23.10.2022 лирика генерится отдельной моделью
-                ranked_poems = long_poetry_generator.generate_poems(format, topic, num_return_sequences=5)
-            else:
+                ranked_poems = long_poetry_generator.generate_poems('лирика', topic, num_return_sequences=5)
+            elif format == 'детский стишок':
+                ranked_poems = long_poetry_generator.generate_poems('стихи для детей', topic, num_return_sequences=5)
+
+            if len(ranked_poems) == 0:
+                # В остальных случаях, и если генерация моделью long poems ничего не дала, используем старую модельку.
+                logging.debug('Using base model for generation with format="%s" topic="%s"', format, topic)
                 ranked_poems = poetry_generator.generate_poems(format, topic, num_return_sequences=5)
 
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
 
-                if format in 'детский стишок|философия|юмор|частушка'.split('|'):
-                    poem = poetry_generator.continue8(poem)
+                #if format in 'детский стишок|философия|юмор|частушка'.split('|'):
+                #    poem = poetry_generator.continue8(poem)
 
                 for line in poem:
                     print(line)
