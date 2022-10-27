@@ -119,8 +119,8 @@ def format_menu(context, callback_data):
         user_format[user_id] = 'философия'
     elif format == FORMAT__HUM:
         user_format[user_id] = 'юмор'
-    elif format == FORMAT__MIST:
-        user_format[user_id] = 'мистика'
+    #elif format == FORMAT__MIST:
+    #    user_format[user_id] = 'мистика'
     elif format == FORMAT__FOLK:
         user_format[user_id] = 'частушка'
     elif format == FORMAT__1LINER:
