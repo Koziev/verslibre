@@ -19,6 +19,7 @@ import random
 import re
 import collections
 import pickle
+import getpass
 
 import numpy as np
 import torch
@@ -548,7 +549,7 @@ if __name__ == '__main__':
     if args.mode == 'telegram':
         telegram_token = args.token
         if len(telegram_token) == 0:
-            telegram_token = input('Enter Telegram token:> ').strip()
+            telegram_token = getpass.getpass('Enter Telegram token:> ').strip()
 
     seed_generator = SeedGenerator(models_dir)
 
