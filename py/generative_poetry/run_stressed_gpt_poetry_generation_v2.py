@@ -26,6 +26,7 @@ import io
 import logging
 import argparse
 import traceback
+import getpass
 
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
@@ -79,19 +80,19 @@ def start(update, context) -> None:
 
     keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
                 [InlineKeyboardButton(FORMAT__KID, callback_data='format=' + FORMAT__KID)],
-                [InlineKeyboardButton(FORMAT__PHIL, callback_data='format=' + FORMAT__PHIL)],
+                #[InlineKeyboardButton(FORMAT__PHIL, callback_data='format=' + FORMAT__PHIL)],
                 [InlineKeyboardButton(FORMAT__HUM, callback_data='format=' + FORMAT__HUM)],
                 [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format=' + FORMAT__RUBAI)],
                 #[InlineKeyboardButton(FORMAT__MIST, callback_data='format=' + FORMAT__MIST)],
                 [InlineKeyboardButton(FORMAT__FOLK, callback_data='format=' + FORMAT__FOLK)],
                 [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
-                [InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
+                #[InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 27.10.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 02.11.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
                                   "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
@@ -375,7 +376,7 @@ if __name__ == '__main__':
     if args.mode == 'telegram':
         telegram_token = args.token
         if len(telegram_token) == 0:
-            telegram_token = input('Enter Telegram token:> ').strip()
+            telegram_token = getpass.getpass('Enter Telegram token:> ').strip()
 
     if args.mode == 'telegram':
         logging.info('Starting telegram bot')
