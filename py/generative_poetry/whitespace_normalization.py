@@ -27,17 +27,24 @@ def normalize_whitespaces(s):
     s = re.sub(r' - ка\b', '-ка', s)  # Глянь - ка ==> Глянь-ка
     s = re.sub(r'\bиз - за\b', 'из-за', s, flags=re.I)  # из - за ==> из-за
     s = re.sub(r'\bиз - под\b', 'из-под', s, flags=re.I)
-    s = re.sub(r' - нибудь\b', '-нибудь', s)  # Кто - нибудь ==> Кто-нибудь
-    s = re.sub(r'\bпо - (.+?)\b', r'по-\1', s)  # по - новому ==> по-новому
-    s = re.sub(r'\bко́е - как\b', 'ко́е-как', s)
-    s = re.sub(r'\bкое - как\b', 'кое-как', s)
-    s = re.sub(r'\bко́е - что\b', 'ко́е-что', s)
+    s = re.sub(r' - нибудь\b', '-нибудь', s, flags=re.I)  # Кто - нибудь ==> Кто-нибудь
+    s = re.sub(r'\bпо - (.+?)\b', r'по-\1', s, flags=re.I)  # по - новому ==> по-новому
+    s = re.sub(r'\bко́е - как\b', 'ко́е-как', s, flags=re.I)
+    s = re.sub(r'\bкое - как\b', 'кое-как', s, flags=re.I)
+    s = re.sub(r'\bко́е - что\b', 'ко́е-что', s, flags=re.I)
     s = re.sub(r'\bо́бщем - то\b', 'о́бщем-то', s)
+
+    s = re.sub(r'(чу́?ть) - (чу́?ть)', r'\1-\2', s, flags=re.I)  # Чтоб задержаться на чуть - чуть...
+
+    s = re.sub(r'(о́?чень) - (о́?чень)', r'\1-\2', s, flags=re.I)  # Очень - очень славный дед
 
     return s
 
 
 if __name__ == '__main__':
+    print(normalize_whitespaces('Очень - очень славный дед,'))
+    print(normalize_whitespaces('Чтоб задержаться на чуть - чуть...'))
+
     print(normalize_whitespaces('Давай - ка миленький мой, слазь'))
     print(normalize_whitespaces('по - новому работай'))
     print(normalize_whitespaces('из - под полы'))
