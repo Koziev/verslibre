@@ -92,7 +92,7 @@ def start(update, context) -> None:
 
     context.bot.send_message(chat_id=update.message.chat_id,
                              text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 02.11.2022).\n" +
+                                  "Я - бот для генерации стихов разных жанров (версия от 05.11.2022).\n" +
                                   "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
                                   "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
                                   "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
@@ -133,7 +133,9 @@ def format_menu(context, callback_data):
 
     logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
 
-    seeds = seed_generator.generate_seeds(user_id)
+    # Получаем порцию саджестов (обычно 3 штуки) под выбранный жанр, чтобы пользователю не пришлось напрягаться
+    # с придумыванием затравок.
+    seeds = seed_generator.generate_seeds(user_id, domain=user_format.get(user_id))
     keyboard = [seeds]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
@@ -195,7 +197,7 @@ def echo(update, context):
             last_user_poem[user_id] = None
             last_user_poems[user_id] = []
 
-            keyboard = [seed_generator.generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
@@ -256,7 +258,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
-                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id, domain=format)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -321,7 +323,7 @@ def echo(update, context):
             if len(last_user_poems[user_id]):
                 keyboard = [[LIKE, DISLIKE, MORE, NEW]]
             else:
-                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id)]
+                keyboard = [[LIKE, DISLIKE], seed_generator.generate_seeds(user_id, domain=format)]
 
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
@@ -332,7 +334,7 @@ def echo(update, context):
                                      text=render_poem_html(last_user_poem[user_id]),
                                      reply_markup=reply_markup, parse_mode='HTML')
         else:
-            keyboard = [seed_generator.generate_seeds(user_id)]
+            keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
             reply_markup = ReplyKeyboardMarkup(keyboard,
                                                one_time_keyboard=True,
                                                resize_keyboard=True,
