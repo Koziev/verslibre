@@ -287,7 +287,7 @@ def echo(update, context):
         max_temperature = 1.6
         while temperature <= max_temperature:
             poems2 = []
-            if format in 'лирика'.split('|'):
+            if format in 'лирика|юмор'.split('|'):
                 # 23.10.2022 отдельная модель для длинных стихов
                 poems = long_poetry_generator.generate_poems(format, seed, temperature=temperature, num_return_sequences=10)
                 poems2 = [('\n'.join(lines), score) for lines, score in poems]
@@ -457,8 +457,9 @@ if __name__ == '__main__':
             topic = input(':> ').strip()
 
             ranked_poems = []
-            if format == 'лирика':
+            if format in 'лирика|юмор'.split('|'):
                 # 23.10.2022 лирика генерится отдельной моделью
+                # 05.11.2022 юмор
                 ranked_poems = long_poetry_generator.generate_poems('лирика', topic, num_return_sequences=5)
             elif format == 'детский стишок':
                 ranked_poems = long_poetry_generator.generate_poems('стихи для детей', topic, num_return_sequences=5)
