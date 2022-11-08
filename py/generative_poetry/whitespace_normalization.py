@@ -37,11 +37,13 @@ def normalize_whitespaces(s):
     s = re.sub(r'(чу́?ть) - (чу́?ть)', r'\1-\2', s, flags=re.I)  # Чтоб задержаться на чуть - чуть...
 
     s = re.sub(r'(о́?чень) - (о́?чень)', r'\1-\2', s, flags=re.I)  # Очень - очень славный дед
+    s = re.sub(r'(давны́?м) - (давно́?)', r'\1-\2', s, flags=re.I)  # Давным - давно, ты знаешь, все так было,
 
     return s
 
 
 if __name__ == '__main__':
+    print(normalize_whitespaces('Давным - давно, ты знаешь, все так было,'))
     print(normalize_whitespaces('Очень - очень славный дед,'))
     print(normalize_whitespaces('Чтоб задержаться на чуть - чуть...'))
 
