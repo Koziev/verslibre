@@ -23,6 +23,9 @@ using a masked language modeling (MLM) loss.
 08-12-2021 добавлено использование кастомного токенизатора StressedGptTokenizer
 06-04-2022 после загрузки претренированного токенизатора инициализируем в нем токены <s>, </s> и <pad>, так как
            иначе они разбиваются на символы.
+09-11-2022 добавлен формат датасета text_stream, реализованный через IterableDataset для претрейна на очень большом корпусе без
+           загрузки всех сэмплов в ram.
+10-11-2022 опция --add_tokens позволяет указать список новых токенов для файнтюна
 """
 
 import argparse
@@ -34,11 +37,13 @@ import random
 import re
 import shutil
 from typing import Dict, List, Tuple
+import math
+import json
 
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, IterableDataset, Dataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
@@ -70,11 +75,8 @@ class TextDataset(Dataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
         assert os.path.isfile(file_path)
 
-        # block_size = block_size - (tokenizer.max_len - tokenizer.max_len_single_sentence)
-
         directory, filename = os.path.split(file_path)
-        cached_features_file = os.path.join(directory,
-                                            args.model_type + "_cached_lm_" + str(block_size) + "_" + filename)
+        cached_features_file = os.path.join(directory, args.model_type + "_cached_lm_" + str(block_size) + "_" + filename)
 
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
             logger.info('Loading features from cached file "%s"', cached_features_file)
@@ -91,22 +93,20 @@ class TextDataset(Dataset):
             # 16-11-2021 порежем на куски по границам, отмеченным токеном <|startoftext|>
             # 23-11-2021 читаем из файлы строками, при встрече строки <|startoftext|> или по достижении размера в 1Мб берем накопившийся текст и нарезаем его на блоки.
             total_size = os.path.getsize(file_path) // 1_000_000
-            prev_consumed_amount = 0
-            with tqdm(total=total_size, desc='Tokenization', unit='MB') as pbar, open(file_path, encoding="utf-8") as f:
+            with tqdm(total=total_size, desc='Tokenization', unit='Mb') as pbar, open(file_path, encoding="utf-8") as f:
                 chunk_lines = []
                 consumed_amount = 0
+                prev_consumed_amount = 0
                 for iline, line in enumerate(f):
-
-                    consumed_amount += len(line)
-                    if 0 == (iline % 10000):
-                        pbar.update(consumed_amount//1_000_000 - prev_consumed_amount)
-                        prev_consumed_amount = consumed_amount//1_000_000
-
                     if line.startswith('<|startoftext|>') or sum(map(len, chunk_lines)) > (5000 * block_size):
                         chunk_text = '\n'.join(chunk_lines)
+
                         consumed_amount += len(chunk_text)
-                        pbar.update(consumed_amount - prev_consumed_amount)
-                        prev_consumed_amount = consumed_amount
+                        cur_consumed_amount = consumed_amount//1_000_000
+                        delta = cur_consumed_amount - prev_consumed_amount
+                        if delta > 0:
+                            pbar.update(delta)
+                            prev_consumed_amount = cur_consumed_amount
 
                         tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(chunk_text))
                         # Теперь режем кусок на блоки заданного размера
@@ -131,6 +131,101 @@ class TextDataset(Dataset):
 
     def __getitem__(self, item):
         return torch.tensor(self.examples[item], dtype=torch.long)
+
+
+class TextIterableDataset(IterableDataset):
+    """Потокое чтение кусков из текстового файла, без загрузки полностью в память."""
+
+    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
+        assert os.path.isfile(file_path)
+
+        super(TextIterableDataset).__init__()
+
+        self.tokenizer = tokenizer
+        self.file_path = file_path
+        self.block_size = block_size
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            # only single-process data loading supported
+            raise NotImplementedError()
+
+        directory, filename = os.path.split(file_path)
+        self.cached_features_file = os.path.join(directory, args.model_type + "_textstream_cache_" + str(block_size) + "_" + filename)
+        cached_meta_file = os.path.join(directory, args.model_type + "_textstream_meta_" + str(block_size) + "_" + filename)
+        if os.path.exists(self.cached_features_file) and os.path.exists(cached_meta_file) and not args.overwrite_cache:
+            # читаем из подготовленного файла с записями.
+            with open(cached_meta_file, 'r') as f:
+                meta = json.load(f)
+                self.num_samples = meta['num_samples']
+        else:
+            # парсим данные и записываем в кэш-файл
+            logger.info('Start parsing "%s" and writing samples to cache file "%s"', file_path, self.cached_features_file)
+            self.num_samples = 0
+
+            total_size = os.path.getsize(file_path) // 1_000_000
+            with tqdm(total=total_size, desc='Caching', unit='Mb') as pbar, open(file_path, encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f, open(self.cached_features_file, 'wb') as wrt:
+                    chunk_lines = []
+                    consumed_amount = 0
+                    prev_consumed_amount = 0
+                    for iline, line in enumerate(f):
+                        if line.startswith('<|startoftext|>') or sum(map(len, chunk_lines)) > (5000 * self.block_size):
+                            chunk_text = '\n'.join(chunk_lines)
+
+                            consumed_amount += len(chunk_text)
+                            cur_consumed_amount = consumed_amount // 1_000_000
+                            delta = cur_consumed_amount - prev_consumed_amount
+                            if delta > 0:
+                                pbar.update(delta)
+                                prev_consumed_amount = cur_consumed_amount
+
+                            tokenized_text = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(chunk_text))
+                            # Теперь режем кусок на блоки заданного размера
+                            while tokenized_text:
+                                block = tokenized_text[:self.block_size]
+                                if len(block) < self.block_size:
+                                    # Совсем маленький кусочек, дополним его справа до размера блока.
+                                    block += [0] * (self.block_size - len(block))
+
+                                sample = self.tokenizer.build_inputs_with_special_tokens(block)
+                                pickle.dump(sample, wrt)
+                                self.num_samples += 1
+                                tokenized_text = tokenized_text[len(block):]
+                            chunk_lines = []
+                        else:
+                            chunk_lines.append(line)
+
+                        # НАЧАЛО ОТЛАДКИ
+                        #if self.num_samples >= 1000000:
+                        #    print('DEBUG@186 BREAK')
+                        #    break
+                        # КОНЕЦ ОТЛАДКИ
+
+            with open(cached_meta_file, 'w') as f:
+                meta = {'num_samples': self.num_samples}
+                json.dump(meta, f)
+
+    def __len__(self):
+        return self.num_samples
+
+    def __iter__(self):
+        # 16-11-2021 порежем на куски по границам, отмеченным токеном <|startoftext|>
+        # 23-11-2021 читаем из файлы строками, при встрече строки <|startoftext|> или по достижении размера в 1Мб берем накопившийся текст и нарезаем его на блоки.
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:  # single-process data loading, return the full iterator
+            logger.info('Reading %d samples from "%s"', self.num_samples, self.cached_features_file)
+            with open(self.cached_features_file, 'rb') as rdr:
+                for _ in range(self.num_samples):
+                    sample = pickle.load(rdr)
+                    yield torch.tensor(sample, dtype=torch.long)
+        else:  # in a worker process
+            # split workload
+            per_worker = int(math.ceil((self.end - self.start) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            # ... TODO ...
+            raise NotImplementedError()
 
 
 class LineByLineTextDataset(Dataset):
@@ -223,6 +318,8 @@ def load_and_cache_examples(args, tokenizer, evaluate=False):
         return MultilineTextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
     elif args.iformat == 'text':
         return TextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
+    elif args.iformat == 'text_stream':
+        return TextIterableDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
     else:
         raise NotImplementedError()
 
@@ -309,7 +406,7 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> T
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
     if args.local_rank in [-1, 0]:
-        tb_writer = SummaryWriter()
+        tb_writer = SummaryWriter(log_dir=args.output_dir)
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
@@ -318,10 +415,13 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
-    )
+    if isinstance(train_dataset, IterableDataset):
+        assert(args.local_rank == -1)
+        #train_sampler = SequentialSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=None, batch_size=args.train_batch_size, collate_fn=collate)
+    else:
+        train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -459,8 +559,11 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+                            print('DEBUG@558 EVAL step={} {}={}'.format(global_step, key, value))
+
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
+                    print('DEBUG@ step={} loss={}'.format(global_step, (tr_loss - logging_loss) / args.logging_steps))
                     logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -514,10 +617,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
-    eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(
-        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate
-    )
+    if isinstance(eval_dataset, IterableDataset):
+        assert(args.local_rank == -1)
+        eval_dataloader = DataLoader(eval_dataset, sampler=None, batch_size=args.eval_batch_size, collate_fn=collate)
+    else:
+        eval_sampler = SequentialSampler(eval_dataset)
+        eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate)
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -581,7 +686,7 @@ def main():
         type=str,
         help="An optional input evaluation data file to evaluate the perplexity on (a text file).",
     )
-    parser.add_argument("--iformat", default='text', choices='text lines multilines'.split())
+    parser.add_argument("--iformat", default='text', choices='text lines multilines text_stream'.split())
     parser.add_argument(
         "--should_continue", action="store_true", help="Whether to continue from latest checkpoint in output_dir"
     )
@@ -616,6 +721,7 @@ def main():
 
     parser.add_argument("--bert_tokenizer", default=None, type=str)
     parser.add_argument("--stressed_tokenizer", default=None, type=str)
+    parser.add_argument("--add_tokens", default=None, type=str)
 
     parser.add_argument(
         "--cache_dir",
@@ -797,8 +903,11 @@ def main():
         tokenizer = transformers.BertTokenizer(vocab_file=os.path.join(args.bert_tokenizer, 'vocab.txt'),
                                                do_lower_case=False, strip_accents=False,
                                                tokenize_chinese_chars=False)
-        tokenizer.add_special_tokens(
-            {"bos_token": "<s>", "eos_token": "</s>", 'pad_token': '<pad>', 'unk_token': '<unk>', 'sep_token': '<nl>'})
+        tokenizer.add_special_tokens({"bos_token": "<s>",
+                                      "eos_token": "</s>",
+                                      'pad_token': '<pad>',
+                                      'unk_token': '<unk>',
+                                      'sep_token': '<nl>'})
     elif args.stressed_tokenizer:
         ############ inkoziev 20.10.2021 #############
         logging.info('StressedGptTokenizer from "%s" will be used', args.stressed_tokenizer)
@@ -834,6 +943,12 @@ def main():
         model = AutoModelWithLMHead.from_config(config)
 
     model.to(args.device)
+
+    if args.add_tokens:
+        new_tokens = args.add_tokens.split(' ')
+        logger.info('Adding %d new token(s): %s', len(new_tokens), ' '.join(new_tokens))
+        tokenizer.add_tokens(new_tokens)
+        model.resize_token_embeddings(len(tokenizer))
 
     if args.local_rank == 0:
         torch.distributed.barrier()
