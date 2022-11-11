@@ -68,8 +68,8 @@ def start(update, context) -> None:
     keyboard = [[InlineKeyboardButton('хайку', callback_data='format=' + 'хайку')],
                 [InlineKeyboardButton('бусидо', callback_data='format=' + 'бусидо')],
                 [InlineKeyboardButton('приметы', callback_data='format=' + 'примета')],
-                [InlineKeyboardButton('про Чака Норриса', callback_data='format=' + 'Чак Норрис')],
-                [InlineKeyboardButton('про британских ученых', callback_data='format=' + 'британские ученые')],
+                #[InlineKeyboardButton('про Чака Норриса', callback_data='format=' + 'Чак Норрис')],
+                #[InlineKeyboardButton('про британских ученых', callback_data='format=' + 'британские ученые')],
                 #[InlineKeyboardButton('о детях', callback_data='format=' + 'дети')],
                 #[InlineKeyboardButton('о кошках', callback_data='format=' + 'кошки')],
                 #[InlineKeyboardButton('о жизни', callback_data='format=' + 'жизнь')],
@@ -77,7 +77,7 @@ def start(update, context) -> None:
                 ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b>, <b>бусидо</b> и прочих коротких текстовых миниатюр (версия от 15.10.2022).\n\n".format(update.message.from_user.full_name) +\
+                             text="Привет, {}!\n\nЯ - бот для генерации <b>хайку</b>, <b>бусидо</b> и прочих коротких текстовых миниатюр (версия от 11.11.2022).\n\n".format(update.message.from_user.full_name) +\
                              "Для генерации стихов с рифмой используйте бот @verslibre_bot.\n"
                              "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n"
                              "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
@@ -110,48 +110,48 @@ def format_menu(context, callback_data):
         help_text = 'Включен режим <b>хайку</b>.\n\n' \
                     'Хайку это короткое нерифмованное трехстишье, выражающие отстраненное восприятие пейзажа.\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
                     'и я сочиню хайку с этими словами. '
     elif user_format[user_id] == 'бусидо':
         help_text = 'Включен режим <b>бусидо</b>.\n\n' \
                     'Бусидо - это короткий афористичный текст с привкусом восточной мудрости.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>долг</i>, ' \
                     'и я сочиню бусидо с этими словами. '
     elif user_format[user_id] == 'примета':
         help_text = 'Включена генерация <b>примет</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>укол совести</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>укол совести</i>, ' \
                     'и я сочиню примету с этими словами. '
     elif user_format[user_id] == 'Чак Норрис':
         help_text = 'Включена генерация <b>шуток про Чака Норриса</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>скукоженный шкворень</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>скукоженный шкворень</i>, ' \
                     'и я придумаю какую-нибудь шутку с этими словами и с упоминанием Чака Норриса :). '
     elif user_format[user_id] == 'британские ученые':
         help_text = 'Включена генерация <b>шуток про британских ученых</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>вирус кайфа</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>вирус кайфа</i>, ' \
                     'и я придумаю какую-нибудь шутку с этими словами и с упоминанием британских ученых :). '
     elif user_format[user_id] == 'дети':
         help_text = 'Включена генерация <b>шуток про детей</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>школа</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>школа</i>, ' \
                     'и я придумаю какую-нибудь шутку про детей с этими словами. '
     elif user_format[user_id] == 'кошки':
         help_text = 'Включена генерация <b>шуток про кошек</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>диван</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>диван</i>, ' \
                     'и я придумаю какую-нибудь шутку про кошек с этими словами. '
     elif user_format[user_id] == 'жизнь':
         help_text = 'Включена генерация <b>шуток про жизнь</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зарплата</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зарплата</i>, ' \
                     'и я придумаю какую-нибудь шутку про жизнь с этими словами. '
     elif user_format[user_id] == 'афоризм':
         help_text = 'Включена генерация <b>афоризмов</b>.\n\n' \
                     'Если захотите выбрать другой формат генерируемых текстов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь кидайте в бот картину или вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>стальная решительность</i>, ' \
+                    'Теперь кидайте в бот какое-нибудь существительное или сочетание прилагательного и существительного, например <i>стальная решительность</i>, ' \
                     'и я придумаю какой-нибудь афоризм с этими словами. '
     else:
         raise NotImplementedError()
@@ -240,7 +240,7 @@ def echo(update, context):
 
         # 22.10.2022 повторяем попытки генерации с повышением температуры до тех пор, пока через фильтры не пройдет хотя бы 1 вариант.
         temperature = 1.0
-        max_temperature = 1.8
+        max_temperature = 1.6
         while temperature <= max_temperature:
             haikux = haiku_generator.generate_output('['+format+'] '+seed, num_return_sequences=5, temperature=temperature)
 
@@ -273,7 +273,7 @@ def echo(update, context):
             if haikux2:
                 break
 
-            temperature *= 1.2
+            temperature *= 1.15
             logging.info('Rising temperature to %f and trying again with format="%s" seed="%s" for user="%s" id=%s in chat=%s', temperature, format, seed, user_id)
 
         if len(haikux2) == 0:
@@ -575,16 +575,17 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Модели для обработки картинок
-    logging.info('Start loading image captioning model')
-    vit_model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-    feature_extractor = ViTFeatureExtractor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-    vit_tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-    vit_model.to(device)
+    if False:
+        logging.info('Start loading image captioning model')
+        vit_model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+        feature_extractor = ViTFeatureExtractor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+        vit_tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+        vit_model.to(device)
 
-    logging.info('Start loading NLLB model')
-    nllb_tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
-    nllb_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M")
-    nllb_model.to(device)
+        logging.info('Start loading NLLB model')
+        nllb_tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
+        nllb_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M")
+        nllb_model.to(device)
 
     logging.info('Loading the text generation models from "%s"...', models_dir)
     haiku_generator = RugptGenerator()
@@ -617,8 +618,8 @@ if __name__ == '__main__':
         echo_handler = MessageHandler(Filters.text, echo)
         dispatcher.add_handler(echo_handler)
 
-        img_handler = MessageHandler(Filters.photo, on_process_image)
-        dispatcher.add_handler(img_handler)
+        #img_handler = MessageHandler(Filters.photo, on_process_image)
+        #dispatcher.add_handler(img_handler)
 
         logging.getLogger('telegram.bot').setLevel(logging.INFO)
         logging.getLogger('telegram.vendor.ptb_urllib3.urllib3.connectionpool').setLevel(logging.INFO)
