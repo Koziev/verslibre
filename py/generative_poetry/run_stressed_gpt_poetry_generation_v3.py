@@ -19,6 +19,7 @@ End-2-end генерация рифмованного четверостишья
 22.10.2022 Реализован повтор попыток генерации с повышенной температурой, если все сгенерированные варианты отсеяны фильтрами качества
 23.10.2022 Эксперимент с отдельной моделью для генерации длинных стихов: LongPoetryGenerator
 27.10.2022 Если генерация в модели long poems ничего не дала, запускаем генерацию в старой модели 4-строчников.
+11.11.2022 Большая чистка: убираем все жанры генерации, кроме лирики, меняем стартовый экран. Новое ядро генератора.
 """
 
 import os
@@ -34,8 +35,8 @@ from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardBu
 
 from generative_poetry.init_logging import init_logging
 from generative_poetry.poetry_seeds import SeedGenerator
-from generative_poetry.poetry_generator_core import PoetryGeneratorCore
-from generative_poetry.long_poems_generator import LongPoemGeneratorCore
+
+from generative_poetry.long_poem_generator2 import LongPoemGeneratorCore2
 
 
 def get_user_id(update: Update) -> str:
@@ -78,60 +79,13 @@ def start(update, context) -> None:
     # 08.05.2022 сбросим историю использованных затравок
     seed_generator.restart_user_session(user_id)
 
-    keyboard = [[InlineKeyboardButton(FORMAT__COMMON, callback_data='format='+FORMAT__COMMON)],
-                [InlineKeyboardButton(FORMAT__KID, callback_data='format=' + FORMAT__KID)],
-                #[InlineKeyboardButton(FORMAT__PHIL, callback_data='format=' + FORMAT__PHIL)],
-                [InlineKeyboardButton(FORMAT__HUM, callback_data='format=' + FORMAT__HUM)],
-                [InlineKeyboardButton(FORMAT__RUBAI, callback_data='format=' + FORMAT__RUBAI)],
-                #[InlineKeyboardButton(FORMAT__MIST, callback_data='format=' + FORMAT__MIST)],
-                [InlineKeyboardButton(FORMAT__FOLK, callback_data='format=' + FORMAT__FOLK)],
-                [InlineKeyboardButton(FORMAT__POROSHKI, callback_data='format='+FORMAT__POROSHKI)],
-                #[InlineKeyboardButton(FORMAT__2LINER, callback_data='format='+FORMAT__2LINER)],
-                ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    context.bot.send_message(chat_id=update.message.chat_id,
-                             text="Привет, {}!\n\n".format(update.message.from_user.full_name) +
-                                  "Я - бот для генерации стихов разных жанров (версия от 05.11.2022).\n" +
-                                  "Для генерации хайку и бусидо попробуйте @haiku_guru_bot.\n" +
-                                  "Если у вас есть вопросы - напишите мне kelijah@yandex.ru\n" +
-                                  "Репозиторий проекта: https://github.com/Koziev/verslibre\n\n"
-                                  "Выберите формат сочиняемых стихов:\n",
-                             reply_markup=reply_markup)
-    logging.debug('Leaving START callback with user_id=%s', user_id)
-
-
-def dbg_actions(update, context):
-    pass # TODO ...
-    return
-
-
-def format_menu(context, callback_data):
-    user_id = str(context.effective_user.id)
-    format = callback_data.match.string.split('=')[1]
-
-    if format == FORMAT__COMMON:
-        user_format[user_id] = 'лирика'
-    elif format == FORMAT__RUBAI:
-        user_format[user_id] = 'рубаи'
-    elif format == FORMAT__KID:
-        user_format[user_id] = 'детский стишок'
-    elif format == FORMAT__PHIL:
-        user_format[user_id] = 'философия'
-    elif format == FORMAT__HUM:
-        user_format[user_id] = 'юмор'
-    #elif format == FORMAT__MIST:
-    #    user_format[user_id] = 'мистика'
-    elif format == FORMAT__FOLK:
-        user_format[user_id] = 'частушка'
-    elif format == FORMAT__1LINER:
-        user_format[user_id] = 'одностишье'
-    elif format == FORMAT__2LINER:
-        user_format[user_id] = 'двустишье'
-    elif format == FORMAT__POROSHKI:
-        user_format[user_id] = 'порошок'
-
-    logging.info('Target format set to "%s" for user_id="%s"', user_format[user_id], user_id)
+    intro_text = "Привет, {}!\n\n".format(update.message.from_user.full_name) + \
+    "Я - бот для генерации стихов (версия от 11.11.2022).\n" + \
+    "Для обратной связи используйте kelijah@yandex.ru или https://github.com/Koziev/verslibre.\n\n" + \
+    "Теперь вводите тему - какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, " + \
+    "и я сочиню стишок с этими словами. " + \
+    "Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n" + \
+    "Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему. Кнопка [<b>Новая тема</b>] выведет новые затравки."
 
     # Получаем порцию саджестов (обычно 3 штуки) под выбранный жанр, чтобы пользователю не пришлось напрягаться
     # с придумыванием затравок.
@@ -142,46 +96,12 @@ def format_menu(context, callback_data):
                                        resize_keyboard=True,
                                        per_user=True)
 
-    if user_format[user_id] == 'порошок':
-        help_text = 'Включен режим <b>пирожков</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Порошки, пирожки и депрессяшки это особые жанры. В этих стихах 1) всегда четыре строки 2) часто нет рифмы, 3) нет знаков препинания, ' \
-                    '4) все слова пишутся с маленькой буквы, 5) бывает лексика и темы 18+ 6) есть юмор и стёб.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>весна</i>, ' \
-                    'и я сочиню пирожок с этими словами. '
-    elif user_format[user_id] == 'двустишье':
-        help_text = 'Включен режим <b>полупирожков-двустрочников</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'В этих стихах часто нет рифмы, встречается лексика 18+.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>зимняя любовь</i>, ' \
-                    'и я сочиню двустрочник с этими словами. '
-    elif user_format[user_id] in ('лирика', 'детский стишок', 'философия', 'юмор', 'рубаи', 'мистика', 'частушка'):
-        s = ''
-        if user_format[user_id] == 'лирика':
-            s = 'лирических стихов'
-        elif user_format[user_id] == 'детский стишок':
-            s = 'стихов для детей'
-        elif user_format[user_id] == 'философия':
-            s = 'стихов на философские темы'
-        elif user_format[user_id] == 'юмор':
-            s = 'юмористических стихов'
-        elif user_format[user_id] == 'рубаи':
-            s = 'рубаи'
-        elif user_format[user_id] == 'мистика':
-            s = 'стихов на тему мистики'
-        elif user_format[user_id] == 'частушка':
-            s = 'частушек'
+    context.bot.send_message(chat_id=update.message.chat_id, text=intro_text, reply_markup=reply_markup, parse_mode='HTML')
+    logging.debug('Leaving START callback with user_id=%s', user_id)
 
-        help_text = 'Включен режим <b>' + s + '</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, ' \
-                    'и я сочиню стишок с этими словами. '
-    else:
-        help_text = 'Включен режим <b>моностихов</b>. Если захотите выбрать другой формат стихов, введите команду <code>/start</code>.\n\n' \
-                    'Теперь вводите какое-нибудь существительное или сочетание прилагательного и существительного, например <i>синица</i>, ' \
-                    'и я сочиню стишок-однострочник с этими словами. '
 
-    help_text += 'Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n' \
-                 'Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему. Кнопка [<b>Новая тема</b>] выведет новые затравки.'
-
-    context.callback_query.message.reply_text(text=help_text, reply_markup=reply_markup, parse_mode='HTML')
+def dbg_actions(update, context):
+    pass # TODO ...
     return
 
 
@@ -271,37 +191,25 @@ def echo(update, context):
 
             return
 
-        #msg = random.choice(['Минуточку, или лучше две...', 'Ок, сажусь писать...', 'Хорошо, буду сочинять...',
-        #                     'Понял, приступаю...', 'Отлично, сейчас что-нибудь придумаю...',
-        #                     'Ни слова больше! Я поймал вдохновение...', 'Стихи сочинять иду я', 'Ловлю волну вдохновения',
-        #                     'Уже стучу по кнопкам!', 'Всегда мечтал об этом написать', 'Тема непростая, но я попробую',
-        #                     'Сделаю всё, что в моих силах...'])
-        #context.bot.send_message(chat_id=update.message.chat_id, text=msg)
-
         seed = update.message.text
         logging.info('Will generate a poem using format="%s" seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
+
+        genre = format
+        if format == 'детский стишок':
+            genre = 'стихи для детей'
 
         # 22.10.2022 Если генерация ничего не дала (например, все сгенерированные варианты не прошли фильтры),
         # то увеличиваем температуру и повторяем.
         temperature = 1.0
         max_temperature = 1.6
         while temperature <= max_temperature:
-            poems2 = []
-            if format in 'лирика|юмор'.split('|'):
-                # 23.10.2022 отдельная модель для длинных стихов
-                poems = long_poetry_generator.generate_poems(format, seed, temperature=temperature, num_return_sequences=10)
-                poems2 = [('\n'.join(lines), score) for lines, score in poems]
-            elif format == 'детский стишок':
-                poems = long_poetry_generator.generate_poems('стихи для детей', seed, temperature=temperature, num_return_sequences=10)
-                poems2 = [('\n'.join(lines), score) for lines, score in poems]
-
-            if len(poems2) == 0:
-                logging.debug('Using base model for generation with format="%s" seed="%s"', format, seed)
-                poems2 = [('\n'.join(lines), score) for lines, score in poetry_generator.generate_poems(format, seed, temperature=temperature)]
+            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=seed, num_return_sequences=5)
+            poems2 = [('\n'.join(lines), score) for lines, score in ranked_poems]
 
             if len(poems2) > 0:
                 break
-            temperature *= 1.2
+
+            temperature *= 1.1
             logging.info('Rising temperature to %f and trying again with seed="%s" for user="%s" id=%s in chat=%s', temperature, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
         if len(poems2) == 0:
@@ -312,9 +220,6 @@ def echo(update, context):
 
         for ipoem, (poem, score) in enumerate(poems2, start=1):
             if ipoem == 1:
-                #if format in 'лирика|детский стишок|философия|юмор|мистика|частушка'.split('|'):
-                #    poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
-
                 last_user_poem[user_id] = poem
             else:
                 last_user_poems[user_id].append(poem)
@@ -351,13 +256,13 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre generator v.13')
+    parser = argparse.ArgumentParser(description='Verslibre generator v.14')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
     parser.add_argument('--data_dir', default='../../data', type=str)
     parser.add_argument('--models_dir', default='../../models', type=str)
-    parser.add_argument('--log', type=str, default='../../tmp/stressed_gpt_poetry_generation.{DATETIME}.log')
+    parser.add_argument('--log', type=str, default='../../tmp/stressed_gpt_poetry_generation.{HOSTNAME}.{DATETIME}.log')
 
     args = parser.parse_args()
     mode = args.mode
@@ -367,12 +272,11 @@ if __name__ == '__main__':
 
     init_logging(args.log, True)
 
+    # Генератор саджестов
     seed_generator = SeedGenerator(models_dir)
-    poetry_generator = PoetryGeneratorCore()
-    poetry_generator.load(models_dir, data_dir, tmp_dir)
 
-    # 23.10.2022
-    long_poetry_generator = LongPoemGeneratorCore()
+    # Генератор стихов
+    long_poetry_generator = LongPoemGeneratorCore2()
     long_poetry_generator.load(models_dir, data_dir, tmp_dir)
 
     if args.mode == 'telegram':
@@ -381,9 +285,8 @@ if __name__ == '__main__':
             telegram_token = getpass.getpass('Enter Telegram token:> ').strip()
 
     if args.mode == 'telegram':
-        logging.info('Starting telegram bot')
-
         # Телеграм-версия генератора
+        logging.info('Starting telegram bot')
         tg_bot = telegram.Bot(token=telegram_token).getMe()
         bot_id = tg_bot.name
         logging.info('Telegram bot "%s" id=%s', tg_bot.name, tg_bot.id)
@@ -401,7 +304,7 @@ if __name__ == '__main__':
         dispatcher.add_handler(command_handler)
         #dispatcher.add_handler(CallbackQueryHandler(dbg_actions))
 
-        updater.dispatcher.add_handler(CallbackQueryHandler(format_menu, pattern='format=(.*)'))
+        #updater.dispatcher.add_handler(CallbackQueryHandler(format_menu, pattern='format=(.*)'))
 
         logging.getLogger('telegram.bot').setLevel(logging.INFO)
         logging.getLogger('telegram.vendor.ptb_urllib3.urllib3.connectionpool').setLevel(logging.INFO)
@@ -456,26 +359,14 @@ if __name__ == '__main__':
         while True:
             topic = input(':> ').strip()
 
-            ranked_poems = []
-            if format in 'лирика|юмор'.split('|'):
-                # 23.10.2022 лирика генерится отдельной моделью
-                # 05.11.2022 юмор
-                ranked_poems = long_poetry_generator.generate_poems('лирика', topic, num_return_sequences=5)
-            elif format == 'детский стишок':
-                ranked_poems = long_poetry_generator.generate_poems('стихи для детей', topic, num_return_sequences=5)
+            genre = format
+            if format == 'детский стишок':
+                genre = 'стихи для детей'
 
-            if len(ranked_poems) == 0:
-                # В остальных случаях, и если генерация моделью long poems ничего не дала, используем старую модельку.
-                logging.debug('Using base model for generation with format="%s" topic="%s"', format, topic)
-                ranked_poems = poetry_generator.generate_poems(format, topic, num_return_sequences=5)
+            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=topic, num_return_sequences=5)
 
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
-
-                #if format in 'детский стишок|философия|юмор|частушка'.split('|'):
-                #    poem = poetry_generator.continue8(poem)
-
                 for line in poem:
                     print(line)
-
                 print('='*50)

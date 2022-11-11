@@ -306,6 +306,7 @@ class PoetryWord(object):
                     self.leading_consonants += 1
                 else:
                     self.trailing_consonants += 1
+        self.n_vowels = n_vowels
 
     def __repr__(self):
         output = []
@@ -745,6 +746,9 @@ class PoetryLine(object):
     def __init__(self):
         self.text = None
         self.pwords = None
+
+    def __len__(self):
+        return len(self.pwords)
 
     @staticmethod
     def build(text, udpipe_parser, accentuator):
@@ -1321,6 +1325,11 @@ class PoetryStressAligner(object):
 
     def align1(self, lines):
         pline1 = PoetryLine.build(lines[0], self.udpipe, self.accentuator)
+
+        # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
+        if sum((pword.n_vowels>1) for pword in pline1.pwords) >= 8:
+            raise ValueError('Line is too long: "{}"'.format(pline1))
+
         sline1x = pline1.get_stress_variants(self)
 
         best_score = 0.0
@@ -1352,6 +1361,12 @@ class PoetryStressAligner(object):
 
     def align2(self, lines, check_rhymes):
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+
+        # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
+        for pline in plines:
+            if sum((pword.n_vowels>1) for pword in pline.pwords) >= 8:
+                raise ValueError('Line is too long: "{}"'.format(pline))
+
         stressed_lines = [pline.get_stress_variants(self) for pline in plines]
 
         best_score = 0.0
@@ -1431,6 +1446,12 @@ class PoetryStressAligner(object):
 
     def align4(self, lines, check_rhymes):
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+
+        # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
+        for pline in plines:
+            if sum((pword.n_vowels>1) for pword in pline.pwords) >= 8:
+                raise ValueError('Line is too long: "{}"'.format(pline))
+
         stressed_lines = [pline.get_stress_variants(self) for pline in plines]
 
         best_score = 0.0
@@ -1657,6 +1678,18 @@ class PoetryStressAligner(object):
                     if w1.form.replace('\u0301', '').lower() == w3.form.replace('\u0301', '').lower() and w1.form.replace('\u0301', '') not in 'вновь еще ещё снова опять дальше ближе сильнее слабее сильней слабей тише'.split(' '):
                         return True
 
+            # 01-11-2022 повтор формы существительного
+            nouns = collections.Counter(w.form.lower() for w in pline.poetry_line.pwords if w.upos in ('NOUN', 'PROPN'))
+            if len(nouns) > 0:
+                if nouns.most_common(1)[0][1] > 1:
+                    return True
+
+            # 01-11-2022 наличие в одной строке вариантов с "ё" и с "е" считаем повтором
+            forms = [w.form.lower() for w in pline.poetry_line.pwords]
+            for v1, v2 in [('поёт', 'поет')]:
+                if v1 in forms and v2 in forms:
+                    return True
+
         return False
 
     def detect_poor_poetry(self, alignment):
@@ -1748,9 +1781,9 @@ if __name__ == '__main__':
     tmp_dir = '../../tmp'
     models_dir = '../../models'
 
-    #udpipe = UdpipeParser()
-    #udpipe.load(models_dir)
-    udpipe = StanzaParser()
+    udpipe = UdpipeParser()
+    udpipe.load(models_dir)
+    #udpipe = StanzaParser()
 
     accents = Accents()
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))

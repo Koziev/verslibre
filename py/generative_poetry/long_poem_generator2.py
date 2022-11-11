@@ -429,20 +429,6 @@ def sample_v2(
                     new_pkv.append((tensor1[row_validity], tensor2[row_validity]))
                 model_kwargs['past'] = tuple(new_pkv)
 
-        # НАЧАЛО ОТЛАДКИ
-        if False:
-            print('DEBUG@325')
-            sep_id = self.tokenizer.vocab['$']
-            X = input_ids.cpu().numpy()
-            for i, row in enumerate(X):
-                row = row.tolist()
-                sep_pos = row.index(sep_id)
-                row2 = row[sep_pos+1:]
-                print('[{}] {}'.format(i, ', '.join(str(x) for x in row2)))
-                print('{}'.format(self.tokenizer.decode(row2, clean_up_tokenization_spaces=True)))
-            print('END OF DEBUG@332')
-        # КОНЕЦ ОТЛАДКИ
-
         # inkoziev end
         # =============================================
 
@@ -478,7 +464,6 @@ def decode_line2(line0, remove_stress_marks=True):
         out_words.append(out_word)
 
     s = ' '.join(out_words[::-1])
-    #s = s.replace(' ,', ',').replace(' .', '.').replace(' ?', '?').replace(' !', '!').replace(' …', '…').replace(' :', ':')
     s = normalize_whitespaces(s)
     return s
 
@@ -502,19 +487,17 @@ class RugptGenerator:
 
         self.model = transformers.GPT2LMHeadModel.from_pretrained(model_dir)
 
-        self.model.sample = sample_v2.__get__(self.model)  # меням на свой сэмплер
+        #self.model.sample = sample_v2.__get__(self.model)  # меням на свой сэмплер
 
         self.model.tokenizer = self.tokenizer  # он нам понадобится внутри нашей версии sample()
         self.model.to(self.device)
         self.model.eval()
 
-    def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40, positive_words=None, negative_words=None, max_len=256):
+    def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40,
+                        penalty_alpha=0.0, typical_p=1.0, repetition_penalty=1.0, no_repeat_ngram_size=0,
+                        positive_words=None, negative_words=None, max_len=256):
         global logits_booster
 
-        #top_k = 30
-        #top_p = 0.85
-        #top_p = 0.40
-        repetition_penalty = 1.0
         prompt_text = "<s> " + context + ' $'
         #prompt_text = context + ' $'
         stop_token = "</s>"
@@ -556,16 +539,19 @@ class RugptGenerator:
             logits_booster = None
         # 15-05-2022 КОНЕЦ ЭКСПЕРИМЕНТА
 
+        do_sample = penalty_alpha == 0.0
+
         output_sequences = self.model.generate(
             input_ids=encoded_prompt,
             max_length=max_len,
+            do_sample=do_sample,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
-            do_sample=True,
-            #num_beams=5,
-            #num_beam_groups=5,
+            typical_p=typical_p,
+            penalty_alpha=penalty_alpha,
+            no_repeat_ngram_size=no_repeat_ngram_size,
             num_return_sequences=num_return_sequences,
             pad_token_id=0,
         )
@@ -602,7 +588,7 @@ class RugptGenerator:
         return list(generated_sequences)
 
 
-class LongPoemGeneratorCore(object):
+class LongPoemGeneratorCore2(object):
     def __init__(self):
         self.poem_generator = None
         self.parser = None
@@ -622,15 +608,26 @@ class LongPoemGeneratorCore(object):
 
         self.aligner = PoetryStressAligner(self.parser, self.accents, os.path.join(data_dir, 'poetry', 'dict'))
 
-
-    def generate_poems(self, genre, topic, num_return_sequences=10, temperature=1.0, top_p=0.5, top_k=30):
+    def generate_poems(self, topic, genre=None, emotion_token=None, num_return_sequences=10, temperature=1.0, top_p=0.5, top_k=30,
+                       score_threshold=0.20, penalty_alpha=0.0, typical_p=1.0, repetition_penalty=1.0, no_repeat_ngram_size=0):
         try:
-            seed = arabize(break_to_syllables(self.parser, self.accents, genre + ' , ' + topic))
+            if genre:
+                seed = arabize(break_to_syllables(self.parser, self.accents, genre + ' , ' + topic))
+            elif emotion_token is not None:
+                seed = arabize(break_to_syllables(self.parser, self.accents, topic))
+                if emotion_token:
+                    seed += ' ' + emotion_token
+
             poems = self.poem_generator.generate_output(seed,
                                                         num_return_sequences=num_return_sequences,
                                                         temperature=temperature,
                                                         top_p=top_p,
-                                                        top_k=top_k)
+                                                        top_k=top_k,
+                                                        penalty_alpha=penalty_alpha,
+                                                        typical_p=typical_p,
+                                                        repetition_penalty=repetition_penalty,
+                                                        no_repeat_ngram_size=no_repeat_ngram_size,
+                                                        )
         except Exception as ex:
             logging.error(ex)
             return []
@@ -657,7 +654,7 @@ class LongPoemGeneratorCore(object):
                         # штрафуем за бедную рифмовку
                         score *= 0.5
 
-                    if score > 0.20:
+                    if score > score_threshold:
                         ranked_poems.append((lines, score))
             except Exception as ex:
                 logging.error(ex)
