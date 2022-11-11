@@ -50,6 +50,11 @@ def render_poem_html(poem_txt):
     return s
 
 
+top_p = 0.85
+top_k = 50
+typical_p = 0.7
+
+
 LIKE = 'Нравится!'
 DISLIKE = 'Плохо :('
 NEW = 'Новая тема'
@@ -203,7 +208,9 @@ def echo(update, context):
         temperature = 1.0
         max_temperature = 1.6
         while temperature <= max_temperature:
-            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=seed, num_return_sequences=5)
+            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=seed,
+                                                                temperature=temperature, top_p=top_p, top_k=top_k, typical_p=typical_p,
+                                                                num_return_sequences=5)
             poems2 = [('\n'.join(lines), score) for lines, score in ranked_poems]
 
             if len(poems2) > 0:
@@ -363,7 +370,9 @@ if __name__ == '__main__':
             if format == 'детский стишок':
                 genre = 'стихи для детей'
 
-            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=topic, num_return_sequences=5)
+            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=topic,
+                                                                temperature=1.0, top_p=top_p, top_k=top_k, typical_p=typical_p,
+                                                                num_return_sequences=5)
 
             for poem, score in ranked_poems:
                 print('\nscore={}'.format(score))
