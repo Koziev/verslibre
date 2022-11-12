@@ -33,6 +33,8 @@ import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
+import tensorflow as tf
+
 from generative_poetry.init_logging import init_logging
 from generative_poetry.poetry_seeds import SeedGenerator
 
@@ -263,7 +265,7 @@ def echo(update, context):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre generator v.14')
+    parser = argparse.ArgumentParser(description='Verslibre & haiku generator v.15')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
@@ -279,20 +281,30 @@ if __name__ == '__main__':
 
     init_logging(args.log, True)
 
+    # 19-03-2022 запрещаем тензорфлоу резервировать всю память в гпу по дефолту, так как
+    # это мешает потом нормально работать моделям на торче.
+    for gpu in tf.config.experimental.list_physical_devices('GPU'):
+        tf.config.experimental.set_memory_growth(gpu, True)
+
     # Генератор саджестов
     seed_generator = SeedGenerator(models_dir)
 
-    # Генератор стихов
+    # Генератор рифмованных стихов
+    logging.info('Loading the long poetry generation models from "%s"...', models_dir)
     long_poetry_generator = LongPoemGeneratorCore2()
     long_poetry_generator.load(models_dir, data_dir, tmp_dir)
 
+    # Генератор файку - добавлен 12.11.2022
+    #logging.info('Loading the haiku generation models from "%s"...', models_dir)
+    #haiku_generator = RugptGenerator()
+    #haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
+
     if args.mode == 'telegram':
+        # Телеграм-версия генератора
         telegram_token = args.token
         if len(telegram_token) == 0:
             telegram_token = getpass.getpass('Enter Telegram token:> ').strip()
 
-    if args.mode == 'telegram':
-        # Телеграм-версия генератора
         logging.info('Starting telegram bot')
         tg_bot = telegram.Bot(token=telegram_token).getMe()
         bot_id = tg_bot.name
@@ -336,7 +348,7 @@ if __name__ == '__main__':
         print(menu)
         format = None
         while not format:
-            s = input('1 ... 10 :> ').strip()
+            s = input('1 ... 11 :> ').strip()
             if s == '1':
                 format = 'одностишье'
             elif s == '2':
@@ -367,6 +379,7 @@ if __name__ == '__main__':
             topic = input(':> ').strip()
 
             genre = format
+
             if format == 'детский стишок':
                 genre = 'стихи для детей'
 
