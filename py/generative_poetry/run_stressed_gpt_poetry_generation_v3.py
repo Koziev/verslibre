@@ -52,6 +52,11 @@ def render_poem_html(poem_txt):
     return s
 
 
+def render_error_html(error_text):
+    s = '<pre>🥵\n' + error_text + '</pre>'
+    return s
+
+
 top_p = 0.85
 top_k = 50
 typical_p = 0.7
@@ -112,9 +117,20 @@ def dbg_actions(update, context):
     return
 
 
+def echo_on_error(context, update, user_id, format):
+    keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
+    reply_markup = ReplyKeyboardMarkup(keyboard,
+                                       one_time_keyboard=True,
+                                       resize_keyboard=True,
+                                       per_user=True)
+
+    context.bot.send_message(chat_id=update.message.chat_id,
+                             text=render_error_html('К сожалению, произошла внутренняя ошибка на сервере, поэтому выполнить операцию не получилось.\nВыберите тему для новой генерации из предложенных или введите свою.'),
+                             reply_markup=reply_markup, parse_mode='HTML')
+    return
+
+
 def echo(update, context):
-    # update.chat.first_name
-    # update.chat.last_name
     try:
         user_id = get_user_id(update)
         format = user_format.get(user_id, 'лирика')
@@ -125,16 +141,17 @@ def echo(update, context):
             last_user_poems[user_id] = []
 
             keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
-            reply_markup = ReplyKeyboardMarkup(keyboard,
-                                               one_time_keyboard=True,
-                                               resize_keyboard=True,
-                                               per_user=True)
+            reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True, per_user=True)
             context.bot.send_message(chat_id=update.message.chat_id,
                                      text="Выберите тему из предложенных или введите свою",
                                      reply_markup=reply_markup)
             return
 
         if update.message.text == LIKE:
+            if user_id not in last_user_poem:
+                echo_on_error(context, update, user_id, format)
+                return
+
             # Какой текст полайкали:
             poem = last_user_poem[user_id].replace('\n', ' | ')
             logging.info('LIKE: format="%s" poem="%s" user="%s"', format, poem, user_id)
@@ -153,6 +170,10 @@ def echo(update, context):
             return
 
         if update.message.text == DISLIKE:
+            if user_id not in last_user_poem:
+                echo_on_error(context, update, user_id, format)
+                return
+
             # Какой текст не понравился:
             poem = last_user_poem[user_id].replace('\n', ' | ')
             logging.info('DISLIKE: format="%s" poem="%s" user="%s"', format, poem, user_id)
@@ -172,6 +193,11 @@ def echo(update, context):
 
         if update.message.text == MORE:
             # Выведем следующее из уже сгенерированных
+
+            if user_id not in last_user_poem:
+                echo_on_error(context, update, user_id, format)
+                return
+
             poem = last_user_poems[user_id][-1]
 
             # 23.10.2022 исключил лирику и мистику из списка, так как теперь она будет генерироваться новой модель.
@@ -255,17 +281,18 @@ def echo(update, context):
                                                per_user=True)
 
             context.bot.send_message(chat_id=update.message.chat_id,
-                                     text='Что-то не получается сочинить :(\nЗадайте другую тему, пожалуйста',
+                                     text='Что-то не получается сочинить 😞\nЗадайте другую тему, пожалуйста',
                                      reply_markup=reply_markup)
 
     except Exception as ex:
         logging.error('Error in "echo"')
         logging.error(ex)
         logging.error(traceback.format_exc())
+        echo_on_error(context, update, user_id, format)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre & haiku generator v.15')
+    parser = argparse.ArgumentParser(description='Verslibre & haiku generator v.16')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
@@ -293,11 +320,6 @@ if __name__ == '__main__':
     logging.info('Loading the long poetry generation models from "%s"...', models_dir)
     long_poetry_generator = LongPoemGeneratorCore2()
     long_poetry_generator.load(models_dir, data_dir, tmp_dir)
-
-    # Генератор файку - добавлен 12.11.2022
-    #logging.info('Loading the haiku generation models from "%s"...', models_dir)
-    #haiku_generator = RugptGenerator()
-    #haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
 
     if args.mode == 'telegram':
         # Телеграм-версия генератора
