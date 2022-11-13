@@ -21,6 +21,10 @@ def is_good_haiku(s):
     # Лягушка прыгнула в пруд.
     # Лягушка прыгнула в пруд…
     lines = [remove_trailing_punct(x.strip()).replace('ё', 'е') for x in s.split('\n')]
+    if len(lines) != 3:
+        # 12.11.2022 ожитдаем всегда 3 строчки
+        return False
+
     if lines[0] == lines[1] or lines[1] == lines[2] or lines[0] == lines[2]:
         return False
 
