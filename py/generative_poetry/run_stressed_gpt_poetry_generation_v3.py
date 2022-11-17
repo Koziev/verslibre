@@ -194,7 +194,7 @@ def echo(update, context):
         if update.message.text == MORE:
             # Выведем следующее из уже сгенерированных
 
-            if user_id not in last_user_poem:
+            if user_id not in last_user_poem or len(last_user_poems[user_id]) < 1:
                 echo_on_error(context, update, user_id, format)
                 return
 
@@ -318,7 +318,7 @@ if __name__ == '__main__':
 
     # Генератор рифмованных стихов
     logging.info('Loading the long poetry generation models from "%s"...', models_dir)
-    long_poetry_generator = LongPoemGeneratorCore2()
+    long_poetry_generator = LongPoemGeneratorCore2('stressed_long_poems_generator')
     long_poetry_generator.load(models_dir, data_dir, tmp_dir)
 
     if args.mode == 'telegram':
