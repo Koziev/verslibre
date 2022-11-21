@@ -274,7 +274,7 @@ def echo(update, context):
                 break
 
             temperature *= 1.15
-            logging.info('Rising temperature to %f and trying again with format="%s" seed="%s" for user="%s" id=%s in chat=%s', temperature, format, seed, user_id)
+            logging.info('Rising temperature to %f and trying again with format="%s" seed="%s" for user="%s"', temperature, format, seed, user_id)
 
         if len(haikux2) == 0:
             logging.info('Could not generate a poem for format="%s" seed="%s" user="%s"', format, seed, user_id)
@@ -587,7 +587,7 @@ if __name__ == '__main__':
         nllb_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M")
         nllb_model.to(device)
 
-    logging.info('Loading the text generation models from "%s"...', models_dir)
+    logging.info('Loading the haiku generation models from "%s"...', models_dir)
     haiku_generator = RugptGenerator()
     haiku_generator.load(os.path.join(models_dir, 'rugpt_haiku_generator'))
 
