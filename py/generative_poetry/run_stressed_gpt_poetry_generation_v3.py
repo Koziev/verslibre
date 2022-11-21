@@ -20,6 +20,7 @@ End-2-end генерация рифмованного четверостишья
 23.10.2022 Эксперимент с отдельной моделью для генерации длинных стихов: LongPoetryGenerator
 27.10.2022 Если генерация в модели long poems ничего не дала, запускаем генерацию в старой модели 4-строчников.
 11.11.2022 Большая чистка: убираем все жанры генерации, кроме лирики, меняем стартовый экран. Новое ядро генератора.
+21.11.2022 Переход на модель GPT 355, датасет файнтюна без жанров вообще
 """
 
 import os
@@ -92,11 +93,12 @@ def start(update, context) -> None:
     seed_generator.restart_user_session(user_id)
 
     intro_text = "Привет, {}!\n\n".format(update.message.from_user.full_name) + \
-    "Я - бот для генерации стихов (версия от 11.11.2022).\n" + \
+    "Я - бот для генерации стихов (версия от 21.11.2022).\n" + \
     "Для обратной связи используйте kelijah@yandex.ru или https://github.com/Koziev/verslibre.\n\n" + \
-    "Теперь вводите тему - какое-нибудь существительное или сочетание прилагательного и существительного, например <i>счастливая любовь</i>, " + \
-    "и я сочиню стишок с этими словами. " + \
-    "Либо выберите готовую тему из предложенных - см. кнопки внизу.\n\n" + \
+    "Теперь вводите тему - какое-нибудь существительное или сочетание прилагательного и существительного, например <i>задорная улыбка</i>, " + \
+    "и я сочиню стишок с этими словами.\n\n" + \
+    "Можете также задавать полную первую строку, например <i>У бурных чувств неистовый конец</i>, я попробую продолжить от нее.\n\n" + \
+    "Либо выберите готовую тему - см. кнопки внизу.\n" + \
     "Кнопка [<b>Ещё</b>] выведет новый вариант стиха на заданную тему. Кнопка [<b>Новая тема</b>] выведет новые затравки."
 
     # Получаем порцию саджестов (обычно 3 штуки) под выбранный жанр, чтобы пользователю не пришлось напрягаться
@@ -117,8 +119,8 @@ def dbg_actions(update, context):
     return
 
 
-def echo_on_error(context, update, user_id, format):
-    keyboard = [seed_generator.generate_seeds(user_id, domain=format)]
+def echo_on_error(context, update, user_id):
+    keyboard = [seed_generator.generate_seeds(user_id, domain='лирика')]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
                                        resize_keyboard=True,
@@ -133,7 +135,7 @@ def echo_on_error(context, update, user_id, format):
 def echo(update, context):
     try:
         user_id = get_user_id(update)
-        format = user_format.get(user_id, 'лирика')
+        format = 'лирика'
 
         if update.message.text == NEW:
             # Пользователь хочет, чтобы ему предложили новые саджесты для генерации.
@@ -154,7 +156,7 @@ def echo(update, context):
 
             # Какой текст полайкали:
             poem = last_user_poem[user_id].replace('\n', ' | ')
-            logging.info('LIKE: format="%s" poem="%s" user="%s"', format, poem, user_id)
+            logging.info('LIKE: poem="%s" user="%s"', poem, user_id)
 
             if len(last_user_poems[user_id]):
                 keyboard = [[NEW, MORE]]
@@ -176,7 +178,7 @@ def echo(update, context):
 
             # Какой текст не понравился:
             poem = last_user_poem[user_id].replace('\n', ' | ')
-            logging.info('DISLIKE: format="%s" poem="%s" user="%s"', format, poem, user_id)
+            logging.info('DISLIKE: poem="%s" user="%s"', poem, user_id)
 
             if len(last_user_poems[user_id]):
                 keyboard = [[NEW, MORE]]
@@ -195,15 +197,10 @@ def echo(update, context):
             # Выведем следующее из уже сгенерированных
 
             if user_id not in last_user_poem or len(last_user_poems[user_id]) < 1:
-                echo_on_error(context, update, user_id, format)
+                echo_on_error(context, update, user_id)
                 return
 
             poem = last_user_poems[user_id][-1]
-
-            # 23.10.2022 исключил лирику и мистику из списка, так как теперь она будет генерироваться новой модель.
-            # TODO: исключить остальные стихи тоже
-            #if format in 'детский стишок|философия|юмор'.split('|'):
-            #    poem = '\n'.join(poetry_generator.continue8(poem.split('\n')))
 
             last_user_poem[user_id] = poem
             last_user_poems[user_id] = last_user_poems[user_id][:-1]
@@ -225,18 +222,14 @@ def echo(update, context):
             return
 
         seed = update.message.text
-        logging.info('Will generate a poem using format="%s" seed="%s" for user="%s" id=%s in chat=%s', format, seed, update.message.from_user.name, user_id, str(update.message.chat_id))
-
-        genre = format
-        if format == 'детский стишок':
-            genre = 'стихи для детей'
+        logging.info('Will generate a poem using seed="%s" for user="%s" id=%s in chat=%s', seed, update.message.from_user.name, user_id, str(update.message.chat_id))
 
         # 22.10.2022 Если генерация ничего не дала (например, все сгенерированные варианты не прошли фильтры),
         # то увеличиваем температуру и повторяем.
         temperature = 1.0
         max_temperature = 1.6
         while temperature <= max_temperature:
-            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=seed,
+            ranked_poems = long_poetry_generator.generate_poems(topic=seed,
                                                                 temperature=temperature, top_p=top_p, top_k=top_k, typical_p=typical_p,
                                                                 num_return_sequences=5)
             poems2 = [('\n'.join(lines), score) for lines, score in ranked_poems]
@@ -288,7 +281,7 @@ def echo(update, context):
         logging.error('Error in "echo"')
         logging.error(ex)
         logging.error(traceback.format_exc())
-        echo_on_error(context, update, user_id, format)
+        echo_on_error(context, update, user_id)
 
 
 if __name__ == '__main__':
@@ -318,7 +311,7 @@ if __name__ == '__main__':
 
     # Генератор рифмованных стихов
     logging.info('Loading the long poetry generation models from "%s"...', models_dir)
-    long_poetry_generator = LongPoemGeneratorCore2('stressed_long_poems_generator')
+    long_poetry_generator = LongPoemGeneratorCore2('stressed_long_poetry_generator_medium')
     long_poetry_generator.load(models_dir, data_dir, tmp_dir)
 
     if args.mode == 'telegram':
@@ -354,58 +347,12 @@ if __name__ == '__main__':
         updater.start_polling()
         updater.idle()
     else:
-        # Тестирование в консоли
-        menu = """Выберите жанр:
-1 - моностихи
-2 - двустрочники
-3 - порошки и пирожки
-4 - лирика
-5 - детский стишок
-6 - юмор
-7 - рубаи
-8 - частушка
-9 - Филатов
-10 - Пушкин
-"""
-        print(menu)
-        format = None
-        while not format:
-            s = input('1 ... 11 :> ').strip()
-            if s == '1':
-                format = 'одностишье'
-            elif s == '2':
-                format = 'двустишье'
-            elif s == '3':
-                format = 'порошок'
-            elif s == '4':
-                format = 'лирика'
-            elif s == '5':
-                format = 'детский стишок'
-            elif s == '6':
-                format = 'юмор'
-            elif s == '7':
-                format = 'рубаи'
-            elif s == '8':
-                format = 'частушка'
-            elif s == '9':
-                format = 'Филатов'
-            elif s == '10':
-                format = 'Пушкин'
-            else:
-                print('Некорректный вариант!')
-
-        print('\nформат={}\n'.format(format))
         print('Вводите затравку для генерации\n')
 
         while True:
             topic = input(':> ').strip()
 
-            genre = format
-
-            if format == 'детский стишок':
-                genre = 'стихи для детей'
-
-            ranked_poems = long_poetry_generator.generate_poems(genre=genre, topic=topic,
+            ranked_poems = long_poetry_generator.generate_poems(topic=topic,
                                                                 temperature=1.0, top_p=top_p, top_k=top_k, typical_p=typical_p,
                                                                 num_return_sequences=5)
 

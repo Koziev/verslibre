@@ -539,7 +539,7 @@ class RugptGenerator:
             logits_booster = None
         # 15-05-2022 КОНЕЦ ЭКСПЕРИМЕНТА
 
-        do_sample = penalty_alpha == 0.0
+        do_sample = True  #penalty_alpha == 0.0
 
         output_sequences = self.model.generate(
             input_ids=encoded_prompt,
@@ -550,7 +550,7 @@ class RugptGenerator:
             top_p=top_p,
             repetition_penalty=repetition_penalty,
             typical_p=typical_p,
-            penalty_alpha=penalty_alpha,
+            #penalty_alpha=penalty_alpha,
             no_repeat_ngram_size=no_repeat_ngram_size,
             num_return_sequences=num_return_sequences,
             pad_token_id=0,
@@ -589,7 +589,8 @@ class RugptGenerator:
 
 
 class LongPoemGeneratorCore2(object):
-    def __init__(self):
+    def __init__(self, gpt_name):
+        self.gpt_name = gpt_name
         self.poem_generator = None
         self.parser = None
         self.accents = None
@@ -597,7 +598,9 @@ class LongPoemGeneratorCore2(object):
 
     def load(self, models_dir, data_dir, tmp_dir):
         self.poem_generator = RugptGenerator()
-        self.poem_generator.load(os.path.join(models_dir, 'stressed_long_poems_generator'))
+        #self.poem_generator.load(os.path.join(models_dir, 'stressed_long_poems_generator_medium'))
+        #self.poem_generator.load(os.path.join(models_dir, 'stressed_long_poems_generator'))
+        self.poem_generator.load(os.path.join(models_dir, self.gpt_name))
 
         self.parser = UdpipeParser()
         self.parser.load(models_dir)
@@ -617,6 +620,10 @@ class LongPoemGeneratorCore2(object):
                 seed = arabize(break_to_syllables(self.parser, self.accents, topic))
                 if emotion_token:
                     seed += ' ' + emotion_token
+            elif genre is None and topic is not None:
+                seed = arabize(break_to_syllables(self.parser, self.accents, topic))
+            else:
+                raise NotImplementedError()
 
             poems = self.poem_generator.generate_output(seed,
                                                         num_return_sequences=num_return_sequences,
