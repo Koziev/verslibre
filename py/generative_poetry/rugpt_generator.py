@@ -16,10 +16,10 @@ class RugptGenerator:
         self.model.eval()
 
     def generate_output(self, context, num_return_sequences=10, temperature=1.0):
-        beam_k = 50
-        beam_p = 0.7
-        typical_p = 0.7
-        repetition_penalty = 1.0
+        beam_k = 0
+        beam_p = 1.0
+        typical_p = 0.6
+        repetition_penalty = 1.2
         prompt_text = "<s>" + context + ' #'
         stop_token = "</s>"
         length = 100
