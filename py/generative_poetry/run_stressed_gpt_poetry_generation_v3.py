@@ -58,9 +58,9 @@ def render_error_html(error_text):
     return s
 
 
-top_p = 0.85
-top_k = 50
-typical_p = 0.7
+top_p = 1.00
+top_k = 0
+typical_p = 0.6
 
 
 LIKE = 'Нравится!'
