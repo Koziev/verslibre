@@ -34,20 +34,31 @@ def normalize_whitespaces(s):
     s = re.sub(r'\bко́е - что\b', 'ко́е-что', s, flags=re.I)
     s = re.sub(r'\bо́бщем - то\b', 'о́бщем-то', s)
 
-    s = re.sub(r'(чу́?ть) - (чу́?ть)', r'\1-\2', s, flags=re.I)  # Чтоб задержаться на чуть - чуть...
+    #s = re.sub(r'(чу́?ть) - (чу́?ть)', r'\1-\2', s, flags=re.I)  # Чтоб задержаться на чуть - чуть...
+    #s = re.sub(r'(о́?чень) - (о́?чень)', r'\1-\2', s, flags=re.I)  # Очень - очень славный дед
+    #s = re.sub(r'(давны́?м) - (давно́?)', r'\1-\2', s, flags=re.I)  # Давным - давно, ты знаешь, все так было,
+    #s = re.sub(r'(раха́?т) - (луку́?м)', r'\1-\2', s, flags=re.I)  # рахат - лукум
 
-    s = re.sub(r'(о́?чень) - (о́?чень)', r'\1-\2', s, flags=re.I)  # Очень - очень славный дед
-    s = re.sub(r'(давны́?м) - (давно́?)', r'\1-\2', s, flags=re.I)  # Давным - давно, ты знаешь, все так было,
-    s = re.sub(r'(раха́?т) - (луку́?м)', r'\1-\2', s, flags=re.I)  # рахат - лукум
+    entries = ['все - таки', 'всё - таки', 'рахат - лукум', 'давным - давно', 'очень - очень', 'чуть - чуть',
+               'жил - был', 'туда - сюда',]
+    for entry in entries:
+        r2 = re.sub(r'([аеёиоуыэюя])', r'\1́?', entry)
+        m2 = re.match(r'^(.+) - (.+)$', r2)
+        part1 = m2.group(1)
+        part2 = m2.group(2)
+        s = re.sub('({}) - ({})'.format(part1, part2), r'\1-\2', s, flags=re.I)
 
     return s
 
 
 if __name__ == '__main__':
+    print(normalize_whitespaces('Что где-то есть, он, все - таки, творец,'))
     print(normalize_whitespaces('и рахат - лукум'))
     print(normalize_whitespaces('Давным - давно, ты знаешь, все так было,'))
     print(normalize_whitespaces('Очень - очень славный дед,'))
     print(normalize_whitespaces('Чтоб задержаться на чуть - чуть...'))
+    print(normalize_whitespaces('Жил - был у бабушки серенький козлик,'))
+    print(normalize_whitespaces('Опять с подружками ходить туда - сюда.'))
 
     print(normalize_whitespaces('Давай - ка миленький мой, слазь'))
     print(normalize_whitespaces('по - новому работай'))
