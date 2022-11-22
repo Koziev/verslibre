@@ -6,14 +6,14 @@ SHELL ["/bin/bash", "-c"]
 ENV LANG C.UTF-8
 
 RUN apt-get update
-RUN apt-get install -y python python-pip
+RUN apt-get install -y python python3-pip
 RUN apt-get -y install git-core
 RUN apt-get install -y liblzma-dev
 
 RUN pip install --upgrade pip
 RUN pip install --upgrade setuptools
 
-RUN pip install torch absl-py transformers coloredlogs python-telegram-bot pyconll ufal.udpipe
+RUN pip install torch absl-py transformers coloredlogs python-telegram-bot pyconll ufal.udpipe pillow networkx
 
 RUN apt-get clean
 
@@ -23,6 +23,9 @@ RUN mkdir -p /text_generator/tmp
 WORKDIR /text_generator/py
 COPY ./py/antiplagiat.py ./
 
+WORKDIR /text_generator/tmp
+COPY ./tmp/thesaurus.pkl ./
+
 WORKDIR /text_generator/py/generative_poetry
 COPY ./py/generative_poetry/rugpt_generator.py ./
 COPY ./py/generative_poetry/run_haiku_generator.py ./
@@ -30,6 +33,7 @@ COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/init_logging.py ./
 COPY ./py/generative_poetry/is_good_haiku.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
+COPY ./py/generative_poetry/thesaurus.py ./
 
 
 WORKDIR /text_generator/scripts/

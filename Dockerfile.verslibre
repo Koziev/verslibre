@@ -6,7 +6,7 @@ SHELL ["/bin/bash", "-c"]
 ENV LANG C.UTF-8
 
 RUN apt-get update
-RUN apt-get install -y python python-pip
+RUN apt-get install -y python python3-pip
 RUN apt-get -y install git-core
 RUN apt-get install -y liblzma-dev
 
@@ -22,7 +22,8 @@ RUN pip install git+https://github.com/Koziev/rusyllab
 RUN apt-get clean
 
 WORKDIR /text_generator/py/generative_poetry
-COPY ./py/generative_poetry/run_stressed_gpt_poetry_generation_v2.py ./
+COPY ./py/generative_poetry/run_stressed_gpt_poetry_generation_v3.py ./
+COPY ./py/generative_poetry/long_poem_generator2.py ./
 COPY ./py/generative_poetry/init_logging.py ./
 COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
@@ -76,11 +77,8 @@ WORKDIR /text_generator/scripts/
 COPY ./scripts/verslibre_tg.sh ./
 
 
-WORKDIR /text_generator/models/stressed_poetry_generator
-COPY ./models/stressed_poetry_generator/* ./
-
-WORKDIR /text_generator/models/stressed_8liner_generator
-COPY ./models/stressed_8liner_generator/* ./
+WORKDIR /text_generator/models/stressed_long_poetry_generator_medium
+COPY ./models/stressed_long_poetry_generator_medium/* ./
 
 WORKDIR /text_generator/models
 COPY ./models/seeds.pkl ./
