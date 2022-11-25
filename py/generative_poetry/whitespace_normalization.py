@@ -36,16 +36,14 @@ def normalize_whitespaces(s):
             if w2 in uline:
                 s = re.sub('(' + w2 + ') - то', '\\1-то', s, flags=re.I)
 
-    if '-' in s:
+    if ' - ' in s:
         # Коррекция пробелов вокруг дефиса.
         s = re.sub(r' - ка\b', '-ка', s)  # Глянь - ка ==> Глянь-ка
         s = re.sub(r' - нибудь\b', '-нибудь', s, flags=re.I)  # Кто - нибудь ==> Кто-нибудь
         s = re.sub(r'\bпо - (.+?)\b', r'по-\1', s, flags=re.I)  # по - новому ==> по-новому
         s = re.sub(r'то́?чь - в - то́?чь', 'точь-в-точь', s, flags=re.I)
 
-        s = re.sub(r'(баб\w+) - (яг\w+)\b', r'\1-\2', s, flags=re.I)  # Баба - Яга
-
-        s = re.sub(r'\b(я́?рко|алкого́?льно|бле́?дно|ви́?нно|вое́?нно|доро́?жно|же́?лто|жё́?лто|фиоле́?тово|кори́?чнево|инти́?мно|краснова́?то|культу́?рно|моло́?чно|нау́?чно|о́?пто́?во|пло́?ско|розова́?то|све́?тло|се́?веро|се́?ро|те́?мно|тё́?мно|усло́?вно|уче́?бно|че́?рно|чё́?рно|чи́?сто|я́?блочно|я́?дерно|си́?не) - (\w+)\b', r'\1-\2', s, flags=re.I)  # Не ярко - красные, как говорят в народе.
+        s = re.sub(r'\b(я́?рко|алкого́?льно|бле́?дно|ви́?нно|вое́?нно|доро́?жно|же́?лто|жё́?лто|фиоле́?тово|кори́?чнево|инти́?мно|краснова́?то|культу́?рно|моло́?чно|нау́?чно|о́?пто́?во|пло́?ско|розова́?то|све́?тло|се́?веро|се́?ро|те́?мно|тё́?мно|усло́?вно|уче́?бно|че́?рно|чё́?рно|чи́?сто|я́?блочно|я́?дерно|си́?не|алма́?|а́?ль|бле́?к|ви́?п|йо́?шка́?р|) - (\w+)\b', r'\1-\2', s, flags=re.I)  # Не ярко - красные, как говорят в народе.
 
         if len(rx2_entries) == 0:
             entries = ['все - таки', 'всё - таки', 'рахат - лукум', 'давным - давно', 'очень - очень', 'чуть - чуть',
@@ -69,7 +67,7 @@ def normalize_whitespaces(s):
                        'чьем - то', 'чьему - либо', 'чьему - то', 'чьею - либо', 'чьею - то',
                        'чьи - либо', 'чьи - то', 'чьим - либо', 'чьим - то', 'чьими - либо',
                        'чьими - то', 'чьих - либо', 'чьих - то', 'чью - либо', 'чью - то',
-                       'чья - либо', 'чья - то', 'шиворот - навыворот',
+                       'чья - либо', 'чья - то', 'шиворот - навыворот', 'нон - стоп',
                       ]
 
             for entry in entries:
@@ -81,6 +79,67 @@ def normalize_whitespaces(s):
                 rx_str = re.compile('({}) - ({})'.format(part1, part2), flags=re.I)
                 rx2_entries.append(rx_str)
 
+                rx2_entries.append(re.compile(r'(баб\w+) - (яг\w+)\b', flags=re.I))  # Баба - Яга
+                rx2_entries.append(re.compile(r'(бизнес\w+) - (блок\w+)\b', flags=re.I))
+                rx2_entries.append(re.compile(r'(бизнес\w+) - (дам\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(буэнос\w+) - (айрес\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(вагон\w+) - (ресторан\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(гогол\w+) - (могол\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(город\w+) - (геро\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(грин\w+) - (карт\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(далай\w+) - (лам\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(дресс\w+) - (код\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(жар\w+) - (птиц\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(жить\w+) - (быть\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(жук\w+) - (скарабе\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(каминг\w+) - (аут\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(кают\w+) - (компание\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(киндер\w+) - (сюрприз\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(кок\w+) - (кол\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(кокер\w+) - (спаниел\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(лас\w+) - (вегас\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(лос\w+) - (анджелес\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(ляпис\w+) - (лазур\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(мюзик\w+) - (холл\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(нарьян\w+) - (мар\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(норд\w+) - (вест\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(норд\w+) - (ост\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(нью) - (йорк\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(пепси) - (кол\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(пин) - (код\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(пинг\w+) - (понг\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(пит) - (стоп\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(плащ) - (палатк\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(плей) - (офф\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(поп) - (див\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(прайс) - (лист\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(прима) - (балерин\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(рахат) - (лукум\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(рок) - (групп\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(рок) - (зв[её]зд\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(санкт) - (петербург\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(сант\w+) - (барбар\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(сант\w+) - (клаус\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(секонд) - (хенд\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(секс) - (бомб\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(сим) - (карт\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(стоп) - (кран\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(стоп) - (линие\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(стоп) - (сигнал\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(сыр) - (бор\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(тайм\w+) - (аут\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(там) - (там\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(тель) - (авив\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(той) - (терьер\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(торрент) - (трекер\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(тянь) - (шан\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(фокус\w+) - (покус\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(ханты) - (мансийск\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(хит) - (парад\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(хот) - (дог\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(хула) - (хуп\w+)', flags=re.I))
+                rx2_entries.append(re.compile(r'(хэппи) - (энд\w+)', flags=re.I))
+
         for entry in rx2_entries:
             s = entry.sub(r'\1-\2', s)
 
@@ -88,6 +147,8 @@ def normalize_whitespaces(s):
 
 
 if __name__ == '__main__':
+    print(normalize_whitespaces('Езжайте куда - либо в Алма - Ату'))
+    print(normalize_whitespaces('Кто - либо из Нью - Йорка написал зачем - то'))
     print(normalize_whitespaces('Повстречал кто - то Бабу - Ягу'))
     print(normalize_whitespaces('Всё шиворот - навыворот и тяп - ляп'))
     print(normalize_whitespaces('Точь - в - точь сине - зелёная'))
