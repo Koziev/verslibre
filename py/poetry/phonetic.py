@@ -28,7 +28,7 @@ from transcriptor_models.stress_model.stress_model import StressModel
 
 import rusyllab
 
-from poetry.corpus_analyser import CorpusWords
+#from poetry.corpus_analyser import CorpusWords
 
 
 class Accents:
@@ -213,6 +213,8 @@ class Accents:
                     self.word_accents_dict[nword] = nb_vowels_before
                     true_accent_entries[nword] = word
 
+        del self.word_accents_dict['ль']  # в файле "words_accent.json" зачем-то прописано ударение для частицы "ль", удалим
+
         logging.info('%d items in word_accents_dict', len(self.word_accents_dict))
 
         if False:
@@ -377,6 +379,9 @@ class Accents:
                 vowel_count += 1
 
         if vowel_count == 0 and len(word0) > 1 and abbrevs:
+            if word.lower() in ['ль']:
+                return 0
+
             # аббревиатуры из согласных: ГКЧП
             # Считаем, что там число гласных=длине: Гэ-Ка-Че-Пэ
             return len(word0)
@@ -481,6 +486,13 @@ class Accents:
         word = self.yoficate(word)
 
         vowel_count = self.get_vowel_count(word)
+        if vowel_count == 0:
+            if len(word) == 1:
+                # единственная согласная
+                return -1
+            elif word.lower() == 'ль':
+                return -1
+
         if vowel_count == 1:
             # Для слов, содержащих единственную гласную, сразу возвращаем позицию ударения на этой гласной
             return 1
@@ -1513,6 +1525,12 @@ if __name__ == '__main__':
 
     accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
     accents.after_loading(stress_model_dir='../../tmp/stress_model')
+
+    for word in ['ль', 'ж', 'к', 'м', 'б']:
+        p = accents.get_accent(word)
+        if p != -1:
+            print('Expected stress_pos=-1 for word="{}", got {}'.format(word, p))
+            exit(0)
 
     # проверяем детектирование ударения для слов, в которых это не требует морфологических тегов.
     xwords = 'чЯщя щЯми худОжэственный вдвоЁм разъЁм пъЯнки птИцэй жОлтый шОпот тишынА сжыгАю соцыАльная магнитозавИсимыми электрощЁточную'.split() +\

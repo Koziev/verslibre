@@ -1,4 +1,5 @@
 import os
+import pickle
 
 import pyconll
 from ufal.udpipe import Model, Pipeline, ProcessingError
@@ -33,21 +34,49 @@ def get_attr(token, tag_name):
     return ''
 
 
+class Parsing(object):
+    def __init__(self, tokens, text):
+        self.tokens = tokens
+        self.text = text
+
+    def get_text(self):
+        return self.text
+
+    def __repr__(self):
+        return self.text
+
+    def __len__(self):
+        return len(self.tokens)
+
+    def __iter__(self):
+        return list(self.tokens).__iter__()
+
+    def __getitem__(self, i):
+        return self.tokens[int(i)-1]
+
+
 class UdpipeParser:
     def __init__(self):
         self.model = None
         self.pipeline = None
         self.error = None
+        self.word2lemma = None
 
     def load(self, model_path):
+        model_dir = model_path
         if os.path.isfile(model_path):
             udp_model_file = model_path
+            model_dir = os.path.dirname(udp_model_file)
         else:
             udp_model_file = os.path.join(model_path, 'udpipe_syntagrus.model')
 
         self.model = Model.load(udp_model_file)
         self.pipeline = Pipeline(self.model, 'tokenize', Pipeline.DEFAULT, Pipeline.DEFAULT, 'conllu')
         self.error = ProcessingError()
+
+        with open(os.path.join(model_dir, 'word2lemma.pkl'), 'rb') as f:
+            self.word2lemma = pickle.load(f)
+            #self.word2posx = pickle.load(f)
 
     def parse_text(self, text):
         parsings = []
@@ -80,9 +109,32 @@ class UdpipeParser:
                         parsing.append(UDPipeToken(token, upos='SCONJ', tags=[]))
                     elif utoken in ['средь']:
                         parsing.append(UDPipeToken(token, upos='ADP', tags=[]))
+                    elif token.upos == 'PROPN' and token.form[0] == utoken[0]:
+                        # UDPipe с Синтагрусом вдруг начал считать некоторые слова именами собственными, в данном примере "вэ"
+                        # Сделаем их обратно существительными, если с прописной буквы.
+                        # си́дючи в вэ ка́
+                        #          ^^
+                        token.upos = 'NOUN'
+                        parsing.append(UDPipeToken(token))
                     else:
                         parsing.append(UDPipeToken(token))
-                parsings.append(parsing)
+
+                for token in parsing:
+                    uform = token.form.lower()
+                    if uform in self.word2lemma:
+                        token.lemma = self.word2lemma[uform]
+
+                # 03.12.2022
+                # Новая модель syntagrus почему-то стала разбивать "полгода" на 2 токена.
+                # Сольем их обратно вместе?
+                if 'полгода' in parsing0.text.lower():
+                    for i in range(len(parsing)-1):
+                        if parsing[i].upos == 'NUM' and parsing[i].form.lower() == 'пол' and parsing[i+1].upos == 'NOUN' and parsing[i+1].get_attr('Animacy') == 'Inan':
+                            parsing[i+1].form = parsing[i].form + parsing[i+1].form
+                            parsing = parsing[:i] + parsing[i+1:]
+                            break
+
+                parsings.append(Parsing(parsing, parsing0.text))
         except:
             return None
 
