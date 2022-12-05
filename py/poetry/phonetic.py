@@ -1349,6 +1349,20 @@ def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, uns
             and c2[-1] in phonetic_vowels:
             return True
 
+        # АРЛЕК^ИНО - ЖУРАВЛ^ИНЫХ
+        #      ^^^^         ^^^^^
+        if len(c1) == 4 and len(c2) == 5 and c1[:3] == c2[:3] \
+            and c1[-1] in phonetic_vowels \
+            and c2[-2] in phonetic_vowels and c2[-1] in phonetic_consonants:
+            return True
+
+        # УС^АТЫЙ - ВОЛЧ^АТАМ
+        #   ^^^^^       ^^^^^
+        if len(c1) == len(c2) and len(c1) >= 4 and c1[:-2] == c2[:-2] \
+            and c1[-2] in phonetic_vowels and c2[-2] in phonetic_vowels \
+            and c1[-1] in phonetic_consonants+'й' and c2[-1] in phonetic_consonants+'й':
+            return True
+
     for s1, s2 in fuzzy_ending_pairs:
         if check_ending_rx_matching_2(xword1, xword2, s1, s2):
             #print('\nDEBUG@859 word1={} rx={}  <==>  word2={} rx={}\n'.format(xword1, s1, xword2, s2))
