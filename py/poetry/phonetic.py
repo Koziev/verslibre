@@ -21,7 +21,7 @@ import operator
 import logging
 import re
 
-from nltk.stem.snowball import RussianStemmer
+#from nltk.stem.snowball import RussianStemmer
 
 #from russ.stress.model import StressModel
 from transcriptor_models.stress_model.stress_model import StressModel
@@ -242,7 +242,7 @@ class Accents:
             self.rhyming_dict = pickle.load(f)
 
     def after_loading(self, stress_model_dir):
-        self.stemmer = RussianStemmer()
+        #self.stemmer = RussianStemmer()
         #self.stress_model = StressModel.load()
         self.stress_model = StressModel(stress_model_dir)
         self.predicted_accents = dict()
@@ -1023,6 +1023,8 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstresse
 
 
 fuzzy_ending_pairs = [
+    (r'\^уж[уыэа]', r'\^уж[уыэа]'),  # стужу - лужи
+
     (r'\^утам', r'\^уты'),  # парашютам - тьфу ты
 
     (r'\^ады', r'\^аты'),  # пощады - борща ты
@@ -1322,6 +1324,30 @@ def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, uns
         # клаузуллы достаточно длинные и совпадают:
         # поэтом - ответом
         return True
+
+    phonetic_consonants = 'бвгджзклмнпрстфхцчшщ'
+    phonetic_vowels = 'аеиоуыэюя'
+
+    # TODO: нижеследующий код переделать на левенштейна с кастомными весами операций!
+    #
+    for c1, c2 in [(clausula1, clausula2), (clausula2, clausula1)]:
+        # 05.12.2022 Ситуация, когда clausula1 и clausula2 имеют одинаковое начало, но одна из них длиннее на 1 согласную:
+        # ВЕРИЛ - ДВЕРИ
+        if len(c1) > len(c2) and c1.startswith(c2) and c1[-1] in phonetic_consonants:
+            return True
+
+        # clausula1 и clausula2 имеют одинаковое начало, но оканчиваются на разную гласную:
+        # ВЛОЖЕНЫ - ПОЛОЖЕНО
+        if len(c1) == len(c2) and c1[:-1] == c2[:-1] and len(c1) >= 3 \
+                and c1[-2] in phonetic_consonants and c1[-1] in phonetic_vowels and c2[-1] in phonetic_vowels:
+            return True
+
+        # С^ИНИЙ - ОС^ИНА
+        #  ^^^^^     ^^^^
+        if len(c1) == 5 and len(c2) == 4 and c1.startswith(c2[:3]) \
+            and c1[-2] in phonetic_vowels and c1[-1] == 'й' \
+            and c2[-1] in phonetic_vowels:
+            return True
 
     for s1, s2 in fuzzy_ending_pairs:
         if check_ending_rx_matching_2(xword1, xword2, s1, s2):
@@ -1760,6 +1786,9 @@ if __name__ == '__main__':
     # =======================================
     # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
+
+    r = rhymed_fuzzy(accents, 'вложены', None, [], 'положено', None, [])
+    assert(r is True)
 
     # трёхочковый - волочковой
     r = rhymed_fuzzy(accents, 'трёхочковый', None, [], 'волочковой', None, [])
