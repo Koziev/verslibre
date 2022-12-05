@@ -199,7 +199,8 @@ class LongPoemGeneratorCore2(object):
                                                         no_repeat_ngram_size=no_repeat_ngram_size,
                                                         )
         except Exception as ex:
-            logging.error(ex)
+            #logging.error(ex)
+            logging.error(traceback.format_exc(ex))
             return []
 
         threshold_score = 0.1

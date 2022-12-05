@@ -1058,7 +1058,8 @@ class PoetryAlignment(object):
         poetry_lines = []
         for a in alignments4:
             poetry_lines.extend(a.poetry_lines)
-        return PoetryAlignment(poetry_lines, total_score, alignments4[0].meter, alignments4[0].rhyme_scheme)
+        return PoetryAlignment(poetry_lines, total_score, alignments4[0].meter, alignments4[0].rhyme_scheme,
+                               metre_mappings=[a.metre_mappings for a in alignments4])
 
     @staticmethod
     def build_no_rhyming_result(poetry_lines):
