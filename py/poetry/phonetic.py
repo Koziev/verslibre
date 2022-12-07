@@ -1023,6 +1023,8 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstresse
 
 
 fuzzy_ending_pairs = [
+    (r'[бвгджзклмнпрстфхцчшщл]ь\^ер', r'\^е'),  # модельер - ателье
+
     (r'\^уж[уыэа]', r'\^уж[уыэа]'),  # стужу - лужи
 
     (r'\^утам', r'\^уты'),  # парашютам - тьфу ты
@@ -1127,6 +1129,12 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_prefix, unst
 
     VOWELS = 'уеыаоэёяию'
 
+    # 07-12-2022 ситуации с последним БЕЗУДАРНЫМ словом "я":
+    # так э́то де́лать ви́д что я́
+    #                    ^^^^^
+    if word == 'я' and stress_pos == 1 and unstressed_prefix in VOWELS:
+        return "^я", unstressed_prefix+'^я'
+
     # Упрощенный алгоритм фонетической транскрипции - не учитываем йотирование, для гласных июяеё не помечаем
     # смягчение предшествующих согласных, etc.
     v_counter = 0
@@ -1150,7 +1158,11 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_prefix, unst
                     break
                 else:
                     # Добавляем ударную гласную и продолжаем обрабатывать символы справа от него как безударные
-                    if c == 'е':
+                    if i > 0 and word[i-1] in ('ьъ'+VOWELS) and c in 'еёюя':
+                        # 07-12-2022 в будущем надо сделать йотирование, а пока в случае паттернов типа "ружья" оставляем
+                        # гласные "е", "ё", "ю", "я"
+                        pass
+                    elif c == 'е':
                         c = 'э'
                     elif c == 'я':
                         c = 'а'
@@ -1297,7 +1309,12 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_prefix, unst
         apos = xword.index('^')
         if apos == len(xword) - 2:
             # ударная гласная - последняя, в этом случае включаем предшествующую букву.
-            clausula = xword[apos-1:]
+            # 07.12.2022 но если гласная идет после "ь" или "ъ", как в "ружья"
+            #                                                              ^^
+            if xword[apos-1] in 'ьъ':
+                clausula = xword[apos-2:]
+            else:
+                clausula = xword[apos-1:]
         else:
             clausula = xword[apos:]
     else:
@@ -1326,7 +1343,9 @@ def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, uns
         return True
 
     phonetic_consonants = 'бвгджзклмнпрстфхцчшщ'
-    phonetic_vowels = 'аеиоуыэюя'
+    phonetic_vowels = 'аеёиоуыэюя'
+
+    e_2_je = {'э': 'е', 'у': 'ю', 'а': 'я', 'о': 'ё'}
 
     # TODO: нижеследующий код переделать на левенштейна с кастомными весами операций!
     #
@@ -1361,6 +1380,38 @@ def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, uns
         if len(c1) == len(c2) and len(c1) >= 4 and c1[:-2] == c2[:-2] \
             and c1[-2] in phonetic_vowels and c2[-2] in phonetic_vowels \
             and c1[-1] in phonetic_consonants+'й' and c2[-1] in phonetic_consonants+'й':
+            return True
+
+        # ЖЕМЧ^УЖНОЮ - ^ЮЖНУЮ
+        if len(c1) == len(c2) and len(c1) >= 4 and c1[:-2] == c2[:-2] and c1[-1] == c2[-1] \
+            and c1[-2] in phonetic_vowels and c2[-2] in phonetic_vowels:
+            return True
+
+        # ^Я - РУЖЬ^Я
+        if c1 == '^я' and len(c2) == 4 and c2.endswith('ь^я'):
+            return True
+
+        # МО^Я - РУЖЬ^Я
+        if c1[-2:] == c2[-2:] and c1[-2] == '^' and c1[-1] in 'еёяю' and c2[-1] in 'еёюя' \
+            and c1[-3] in phonetic_vowels+'ьъ' and c2[-3] in phonetic_vowels+'ьъ':
+            return True
+
+        # УПО^ЕНЬЯ - НАСТРО^ЕНЬЕ
+        #    ^^^^^         ^^^^^
+        if len(c1) == len(c2) and len(c1) >= 5 and c1[:-1] == c2[:-1] \
+            and c1[-2] in 'ьъ' and c1[-1] in phonetic_vowels and c2[-1] in phonetic_vowels:
+            return True
+
+        # Н^ЕТ - ЛЮДО^ЕД
+        #  ^^^       ^^^
+        if len(c1) == 3 and len(c2) == 3 and c1[0] == '^' and c2[0] == '^' and c1[1] == 'э' and c2[1] == 'е' and c1[2] == c2[2]:
+            return True
+
+        # ПОБ^ЕДА - ПРИ^ЕДУ
+        #    ^^^^      ^^^^
+        if len(c1) == 4 and len(c2) == 4 and c1[0] == '^' and c1[1] in 'аоуэ' and c2[1] in e_2_je.get(c1[1], []) \
+            and c1[2] in phonetic_consonants and c1[2] == c2[2] \
+            and c1[-1] in phonetic_vowels and c2[-1] in phonetic_vowels:
             return True
 
     for s1, s2 in fuzzy_ending_pairs:
@@ -1801,6 +1852,21 @@ if __name__ == '__main__':
     # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
 
+    r = rhymed_fuzzy(accents, 'победа', None, [], 'приеду', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'нет', None, [], 'людоед', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy2(accents, 'модельер', 3, [], '', '', 'ателье', 3, [], '', '')
+    assert(r is True)
+
+    r = rhymed_fuzzy2(accents, 'я', 1, [], '', '', 'ружья', 2, [], '', '')
+    assert(r is True)
+
+    r = rhymed_fuzzy2(accents, 'моя', 2, [], '', '', 'ружья', 2, [], '', '')
+    assert(r is True)
+
     r = rhymed_fuzzy(accents, 'вложены', None, [], 'положено', None, [])
     assert(r is True)
 
@@ -1827,9 +1893,6 @@ if __name__ == '__main__':
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'виртуозен', None, [], 'позе', None, [])
-    assert(r is True)
-
-    r = rhymed_fuzzy(accents, 'нет', None, [], 'людоед', None, [])
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'телевизор', None, [], 'антифриза', None, [])
@@ -1944,9 +2007,6 @@ if __name__ == '__main__':
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'лето', None, [], 'котлету', None, [])
-    assert(r is True)
-
-    r = rhymed_fuzzy(accents, 'победа', None, [], 'приеду', None, [])
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'манежу', None, [], 'невежа', None, [])
