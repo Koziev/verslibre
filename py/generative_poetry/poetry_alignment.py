@@ -14,6 +14,7 @@
            выбрать корректный вариант ударения.
 22.06.2022 в артишоках для последней строки с одним словом для OOV делаем перебор всех вариантов ударности.
 04.08.2022 добавлен учет 3-словных словосочетаний типа "бок О бок"
+06.12.2022 полная переработка алгоритма расстановк ударений: оптимизация, подготовка к использованию спеллчекера
 """
 
 import collections
@@ -92,12 +93,21 @@ class Defects(object):
 
 
 class MetreMappingResult(object):
-    def __init__(self, line_stress_variant, prefix):
-        self.src_line_variant_score = line_stress_variant.get_score()
+    def __init__(self, prefix):
         self.score = 1.0
         self.word_mappings = []
         self.stress_shift_count = 0
         self.prefix = prefix
+        self.cursor = 0
+
+    @staticmethod
+    def build_from_source(src_mapping, new_cursor):
+        new_mapping = MetreMappingResult(src_mapping.prefix)
+        new_mapping.score = src_mapping.score
+        new_mapping.word_mappings = list(src_mapping.word_mappings)
+        new_mapping.stress_shift_count = src_mapping.stress_shift_count
+        new_mapping.cursor = new_cursor
+        return new_mapping
 
     def add_word_mapping(self, word_mapping):
         self.word_mappings.append(word_mapping)
@@ -117,18 +127,21 @@ class MetreMappingResult(object):
         return
 
     def __repr__(self):
-        sx = []
+        if self.word_mappings:
+            sx = []
 
-        for word_mapping in self.word_mappings:
-            sx.append(str(word_mapping))
+            for word_mapping in self.word_mappings:
+                sx.append(str(word_mapping))
 
-        sx.append('[{:6.2g}]'.format(self.score))
+            sx.append('〚{:6.2g}〛'.format(self.score))
 
-        return ' '.join(sx)
+            return ' '.join(sx)
+        else:
+            return '<<< EMPTY >>>'
 
     def get_score(self):
         stress_shift_factor = 1.0 if self.stress_shift_count < 2 else pow(0.5, self.stress_shift_count)
-        return self.score * stress_shift_factor * self.src_line_variant_score
+        return self.score * stress_shift_factor # * self.src_line_variant_score
 
 
 class WordMappingResult(object):
@@ -139,14 +152,17 @@ class WordMappingResult(object):
         self.TN = TN
         self.FN = FN
         self.metre_score = pow(0.1, FP) * pow(0.95, FN) * additional_score_factor
-        self.total_score = self.metre_score   # word.get_score() *
+        self.total_score = self.metre_score * word.get_score()
         self.stress_shift = stress_shift
 
     def get_total_score(self):
         return self.total_score
 
     def __repr__(self):
-        return self.word.get_stressed_form() + '[{:5.2g}]'.format(self.total_score)
+        s = self.word.get_stressed_form()
+        if self.total_score != 1.0:
+            s += '[{:5.2g}]'.format(self.total_score)
+        return s
 
 
 class MetreMappingCursor(object):
@@ -154,126 +170,86 @@ class MetreMappingCursor(object):
         self.prefix = prefix
         self.metre_signature = metre_signature
         self.length = len(metre_signature)
-        self.cursor = 0
         self.allow_stress_shift = allow_stress_shift
 
-    def get_stress(self) -> int:
+    def get_stress(self, cursor) -> int:
         """Возвращает ударность, ожидаемую в текущей позиции"""
         if self.prefix:
-            if self.cursor == 0:
+            if cursor == 0:
                 return 0
             else:
-                return self.metre_signature[(self.cursor - self.prefix) % self.length]
+                return self.metre_signature[(cursor - self.prefix) % self.length]
         else:
-            return self.metre_signature[self.cursor % self.length]
+            return self.metre_signature[cursor % self.length]
 
-    def map(self, line_stress_variant, aligner) -> MetreMappingResult:
-        result = MetreMappingResult(line_stress_variant, self.prefix)
-        for word in line_stress_variant.stressed_words:
-            self.map_word(word, result, aligner)
-        result.finalize()
-        return result
+    def map(self, stressed_words_chain, aligner):
+        start_results = [MetreMappingResult(self.prefix)]
+        final_results = []
+        self.map_chain(prev_node=stressed_words_chain, prev_results=start_results, aligner=aligner, final_results=final_results)
+        return final_results
 
-    def map_word(self, stressed_word, result: MetreMappingResult, aligner):
-        prev_cursor = self.cursor
-        TP, FP, TN, FN = 0, 0, 0, 0
-        for word_sign in stressed_word.stress_signature:
-            metre_sign = self.get_stress()
-            if metre_sign:
-                if word_sign:
-                    # Ударение должно быть и оно есть
-                    TP += 1
-                else:
-                    # ударение должно быть, но его нет
-                    FN += 1
+    def map_chain(self, prev_node, prev_results, aligner, final_results):
+        for cur_slot in prev_node.next_nodes:
+            cur_results = self.map_word(stressed_word_group=cur_slot.stressed_words, results=prev_results, aligner=aligner)
+            if cur_slot.next_nodes:
+                self.map_chain(prev_node=cur_slot, prev_results=cur_results, aligner=aligner, final_results=final_results)
             else:
-                if word_sign:
-                    # Ударения не должно быть, но оно есть
-                    FP += 1
+                for result in cur_results:
+                    result.finalize()
+                    final_results.append(result)
+
+    def map_word(self, stressed_word_group, results: [MetreMappingResult], aligner):
+        new_results = []
+
+        for prev_result in results:
+            for word_mapping, new_cursor in self.map_word1(stressed_word_group, prev_result, aligner):
+                next_metre_mapping = MetreMappingResult.build_from_source(prev_result, new_cursor)
+                next_metre_mapping.add_word_mapping(word_mapping)
+                new_results.append(next_metre_mapping)
+
+        new_results = sorted(new_results, key=lambda z: -z.get_score())
+
+        return new_results
+
+    def map_word1(self, stressed_word_group, result: MetreMappingResult, aligner):
+        result_mappings = []
+
+        for stressed_word in stressed_word_group:
+            cursor = result.cursor
+            TP, FP, TN, FN = 0, 0, 0, 0
+            for word_sign in stressed_word.stress_signature:
+                metre_sign = self.get_stress(cursor)
+                if metre_sign:
+                    if word_sign:
+                        # Ударение должно быть и оно есть
+                        TP += 1
+                    else:
+                        # ударение должно быть, но его нет
+                        FN += 1
                 else:
-                    # Ударения не должно быть, и его нет
-                    TN += 1
-            self.cursor += 1
-        best_score = -(FP*2 + FN)
+                    if word_sign:
+                        # Ударения не должно быть, но оно есть
+                        FP += 1
+                    else:
+                        # Ударения не должно быть, и его нет
+                        TN += 1
+                cursor += 1
 
-        # Проверим сочетание ударения в предыдущем слове и в текущем, в частности - оштрафуем за два ударных слога подряд
-        additional_score_factor = 1.0
-        if len(stressed_word.stress_signature) > 0:
-            if len(result.word_mappings) > 0:
-                prev_mapping = result.word_mappings[-1]
-                if prev_mapping.word.stress_signature:
-                    if prev_mapping.word.stress_signature[-1] == 1:  # предыдущее слово закончилось ударным слогом
-                        if stressed_word.stress_signature[0] == 1:
-                            # большой штраф за два ударных подряд
-                            additional_score_factor = 0.1
-                            best_score -= 5
+            # Проверим сочетание ударения в предыдущем слове и в текущем, в частности - оштрафуем за два ударных слога подряд
+            additional_score_factor = 1.0
+            if len(stressed_word.stress_signature) > 0:
+                if len(result.word_mappings) > 0:
+                    prev_mapping = result.word_mappings[-1]
+                    if prev_mapping.word.stress_signature:
+                        if prev_mapping.word.stress_signature[-1] == 1:  # предыдущее слово закончилось ударным слогом
+                            if stressed_word.stress_signature[0] == 1:
+                                # большой штраф за два ударных подряд
+                                additional_score_factor = 0.1
 
-        best_mapping = WordMappingResult(stressed_word, TP, FP, TN, FN, False, additional_score_factor=additional_score_factor)
+            mapping1 = WordMappingResult(stressed_word, TP, FP, TN, FN, False, additional_score_factor=additional_score_factor)
+            result_mappings.append((mapping1, cursor))
 
-        if self.allow_stress_shift:
-            if FN > 0 and FP > 0 and TP == 0:
-                uform = stressed_word.poetry_word.form.lower()
-
-                if count_vowels(uform) > 1:
-                    has_different_stresses = uform in aligner.accentuator.ambiguous_accents and uform not in aligner.accentuator.ambiguous_accents2
-                    if has_different_stresses:
-                        # Можем попробовать взять другой вариант ударности слова, считая,
-                        # что имеем дело с ошибкой частеречной разметки.
-                        sx = list(aligner.accentuator.ambiguous_accents[uform].keys())
-
-                        for stress_form in sx:
-                            stress_pos = -1
-                            n_vowels = 0
-                            for c in stress_form:
-                                if c.lower() in 'уеыаоэёяию':
-                                    n_vowels += 1
-
-                                if c in 'АЕЁИОУЫЭЮЯ':
-                                    stress_pos = n_vowels
-                                    break
-                            if stress_pos != stressed_word.new_stress_pos:
-                                # Нашли новый вариант ударности этого слова.
-                                # Попробуем использовать его вместо выбранного с помощью частеречной разметки.
-                                new_stressed_word = WordStressVariant(stressed_word.poetry_word, stress_pos, stressed_word.get_score())
-                                self.cursor = prev_cursor
-
-                                TP, FP, TN, FN = 0, 0, 0, 0
-                                for word_sign in new_stressed_word.stress_signature:
-                                    metre_sign = self.get_stress()
-                                    if metre_sign:
-                                        if word_sign:
-                                            # Ударение должно быть и оно есть
-                                            TP += 1
-                                        else:
-                                            # ударение должно быть, но его нет
-                                            FN += 1
-                                    else:
-                                        if word_sign:
-                                            # Ударения не должно быть, но оно есть
-                                            FP += 1
-                                        else:
-                                            # Ударения не должно быть, и его нет
-                                            TN += 1
-                                    self.cursor += 1
-                                score = -(FP * 2 + FN)
-
-                                # Проверим сочетание ударения в предыдущем слове и в текущем после изменения положения ударения
-                                additional_score_factor = 1.0
-                                if len(new_stressed_word.stress_signature) > 0:
-                                    if len(result.word_mappings) > 0:
-                                        prev_mapping = result.word_mappings[-1]
-                                        if prev_mapping.word.stress_signature:
-                                            if prev_mapping.word.stress_signature[-1] == 1:  # предыдущее слово закончилось ударным слогом
-                                                if new_stressed_word.stress_signature[0] == 1:
-                                                    # большой штраф за два ударных подряд
-                                                    additional_score_factor = 0.1
-                                                    best_score -= 5
-
-                                if score > best_score:
-                                    best_score = score
-                                    best_mapping = WordMappingResult(new_stressed_word, TP, FP, TN, FN, True, additional_score_factor=additional_score_factor)
-
-        result.add_word_mapping(best_mapping)
+        return result_mappings
 
 
 class WordStressVariant(object):
@@ -397,7 +373,7 @@ class PoetryWord(object):
                     output.append('\u0301')
         return ''.join(output)
 
-    def get_stress_variants(self, aligner):
+    def get_stress_variants(self, aligner, allow_stress_shift):
         variants = []
 
         nvowels = sum((c in 'уеыаоэёяию') for c in self.form.lower())
@@ -471,7 +447,7 @@ class PoetryWord(object):
             # а вариант без ударения - с нормальным скором:
             variants.append(WordStressVariant(self, -1, COEFF['@71']))
         elif self.upos in ('ADP', 'CCONJ', 'SCONJ', 'PART', 'INTJ', 'AUX'): # and not self.is_rhyming_word:
-            if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во', 'на', 'по') and self.upos == 'ADP':
+            if uform in ('о', 'у', 'из', 'от', 'под', 'подо', 'за', 'при', 'до', 'про', 'для', 'ко', 'со', 'во', 'на', 'по', 'об', 'обо', 'без', 'над', 'пред') and self.upos == 'ADP':
                 # эти предлоги никогда не делаем ударными
                 variants.append(WordStressVariant(self, -1, 1.0))
 
@@ -554,8 +530,33 @@ class PoetryWord(object):
             # Добавляем исходный вариант с ударением
             variants.append(WordStressVariant(self, self.stress_pos, 1.0))
 
-        # TODO: + сделать вариант смещения позиции ударения в существительном или глаголе
-        # ...
+        if allow_stress_shift:
+            # Сдвигаем ударение вопреки решению на основе частеречной разметки
+            uform = self.form.lower()
+
+            if count_vowels(uform) > 1:
+                has_different_stresses = uform in aligner.accentuator.ambiguous_accents and uform not in aligner.accentuator.ambiguous_accents2
+                if has_different_stresses:
+                    # Можем попробовать взять другой вариант ударности слова, считая,
+                    # что имеем дело с ошибкой частеречной разметки.
+                    sx = list(aligner.accentuator.ambiguous_accents[uform].keys())
+
+                    for stress_form in sx:
+                        stress_pos = -1
+                        n_vowels = 0
+                        for c in stress_form:
+                            if c.lower() in 'уеыаоэёяию':
+                                n_vowels += 1
+
+                            if c in 'АЕЁИОУЫЭЮЯ':
+                                stress_pos = n_vowels
+                                break
+
+                        if not any((variant.new_stress_pos == stress_pos) for variant in variants):
+                            # Нашли новый вариант ударности этого слова.
+                            # Попробуем использовать его вместо выбранного с помощью частеречной разметки.
+                            new_stressed_word = WordStressVariant(self, stress_pos, 0.99)
+                            variants.append(new_stressed_word)
 
         return variants
 
@@ -589,6 +590,113 @@ class RhymingTail(object):
 
     def get_unstressed_tail(self):
         return self.unstressed_tail
+
+
+class StressVariantsSlot(object):
+    def __init__(self):
+        self.stressed_words = None
+        self.next_nodes = None
+
+    def __repr__(self):
+        s = ''
+        if self.stressed_words:
+            s += '[ ' + ' | '.join(map(str, self.stressed_words)) + ' ]'
+        return s
+
+    @staticmethod
+    def build_next(poetry_words, aligner, allow_stress_shift):
+        next_nodes = []
+
+        pword = poetry_words[0]
+
+        # Проверяем особые случаи трехсловных словосочетаний, в которых ударение ВСЕГДА падает особым образом:
+        # бок О бок
+        if len(poetry_words) > 2:
+            lword1 = pword.form.lower()
+            if lword1 in aligner.collocation3_first:
+                lword2 = poetry_words[1].form.lower()
+                lword3 = poetry_words[2].form.lower()
+
+                for colloc in aligner.collocations:
+                    if len(colloc) == 3:
+                        if colloc.hit3(lword1, lword2, lword3):
+                            if colloc.stressed_word_index == 0:
+                                # первое слово становится ударным, второе и третье - безударные
+                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
+                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
+                            elif colloc.stressed_word_index == 1:
+                                # первое слово становится безударным, второе - ударное, третье - безударное
+                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
+                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
+                            else:
+                                # первое и второе слово безударные, третье - ударное
+                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=colloc.stress_pos, score=1.0)
+
+                            next_node = StressVariantsSlot()
+                            next_node.stressed_words = [stressed_word1]
+
+                            next_node2 = StressVariantsSlot()
+                            next_node2.stressed_words = [stressed_word2]
+                            next_node.next_nodes = [next_node2]
+
+                            next_node3 = StressVariantsSlot()
+                            next_node3.stressed_words = [stressed_word3]
+                            next_node2.next_nodes = [next_node3]
+
+                            if len(poetry_words) > 3:
+                                next_node3.next_nodes = StressVariantsSlot.build_next(poetry_words[3:], aligner, allow_stress_shift=allow_stress_shift)
+
+                            return [next_node]
+
+
+        # Проверяем особый случай двусловных словосочетаний, в которых ударение ВСЕГДА падает не так, как обычно:
+        # друг др^уга
+        if len(poetry_words) > 1:
+            lword1 = pword.form.lower()
+            if lword1 in aligner.collocation2_first:
+                lword2 = poetry_words[1].form.lower()
+
+                for colloc in aligner.collocations:
+                    if len(colloc) == 2:
+                        if colloc.hit2(lword1, lword2):
+                            if colloc.stressed_word_index == 0:
+                                # первое слово становится ударным, второе - безударное
+                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
+                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                            else:
+                                # первое слово становится безударным, второе - ударное
+                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
+
+                            next_node = StressVariantsSlot()
+                            next_node.stressed_words = [stressed_word1]
+
+                            next_node2 = StressVariantsSlot()
+                            next_node2.stressed_words = [stressed_word2]
+                            next_node.next_nodes = [next_node2]
+
+                            if len(poetry_words) > 2:
+                                next_node2.next_nodes = StressVariantsSlot.build_next(poetry_words[2:], aligner, allow_stress_shift=allow_stress_shift)
+
+                            return [next_node]
+
+        # Самый типичный путь - получаем варианты ударения для слова с их весами.
+        next_node = StressVariantsSlot()
+        next_node.stressed_words = pword.get_stress_variants(aligner, allow_stress_shift=allow_stress_shift)
+        if len(poetry_words) > 1:
+            next_node.next_nodes = StressVariantsSlot.build_next(poetry_words[1:], aligner, allow_stress_shift)
+        next_nodes.append(next_node)
+        return next_nodes
+
+    @staticmethod
+    def build(poetry_words, aligner, allow_stress_shift):
+        start = StressVariantsSlot()
+        start.next_nodes = StressVariantsSlot.build_next(poetry_words, aligner, allow_stress_shift)
+        return start
 
 
 class LineStressVariant(object):
@@ -1316,12 +1424,12 @@ class PoetryStressAligner(object):
         # Эти значки мешают работе алгоритма транскриптора, поэтому уберем их сейчас.
         lines = [line.replace('\u0301', '') for line in lines0]
         nlines = len(lines)
-        if nlines == 2:
+        if nlines == 1:
+            return self.align1(lines)
+        elif nlines == 2:
             return self.align2(lines, check_rhymes)
         elif nlines == 4:
             return self.align4(lines, check_rhymes)
-        elif nlines == 1:
-            return self.align1(lines)
         else:
             n4 = (nlines - 1) // 4
             if nlines == (n4*4 + 1):
@@ -1430,42 +1538,42 @@ class PoetryStressAligner(object):
             return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
 
     def align1(self, lines):
+        """Разметка однострочника."""
         pline1 = PoetryLine.build(lines[0], self.udpipe, self.accentuator)
 
         # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
-        if sum((pword.n_vowels>1) for pword in pline1.pwords) >= 8:
+        if sum((pword.n_vowels > 1) for pword in pline1.pwords) >= 8:
             raise ValueError('Line is too long: "{}"'.format(pline1))
-
-        sline1x = pline1.get_stress_variants(self)
 
         best_score = 0.0
         best_metre_name = None
         best_mapping = None
-        best_variant = None
+
         for allow_stress_shift in [False, True]:
+            # Заранее сгенерируем для каждого слова варианты спеллчека и ударения...
+            # stressed_words_groups = [pword.get_stress_variants(self, allow_stress_shift=True) for pword in pline1.pwords]
+            stressed_words_chain = StressVariantsSlot.build(poetry_words=pline1.pwords, aligner=self, allow_stress_shift=allow_stress_shift)
+
             for metre_name, metre_signature in meters:
-                for ivar, sline1 in enumerate(sline1x):
-                    cursor = MetreMappingCursor(metre_signature, prefix=0, allow_stress_shift=allow_stress_shift)
-                    metre_mapping = cursor.map(sline1, self)
+                cursor = MetreMappingCursor(metre_signature, prefix=0, allow_stress_shift=allow_stress_shift)
+                for metre_mapping in cursor.map(stressed_words_chain, self):
                     if metre_mapping.get_score() > best_score:
                         best_score = metre_mapping.get_score()
                         best_metre_name = metre_name
                         best_mapping = metre_mapping
-                        best_variant = [sline1]
-
-            if best_score > 0.1:
+            if best_score > 0.4:
                 break
 
-        # Возвращаем найденный вариант разметки и его оценку
-        if best_mapping.stress_shift_count > 0:
-            # Надо перестроить вариант ударности строки, так как мы выполнили минимум одно перемещение ударения.
-            stressed_words = [m.word for m in best_mapping.word_mappings]
-            new_stress_line = LineStressVariant(pline1, stressed_words, self)
-            best_variant = [new_stress_line]
+        # Возвращаем найденный лучший вариант разметки и его оценку
 
-        return PoetryAlignment(best_variant, best_score, best_metre_name, rhyme_scheme='', metre_mappings=None)
+        stressed_words = [m.word for m in best_mapping.word_mappings]
+        new_stress_line = LineStressVariant(pline1, stressed_words, self)
+        best_variant = [new_stress_line]
+
+        return PoetryAlignment(best_variant, best_score, best_metre_name, rhyme_scheme='', metre_mappings=[best_mapping])
 
     def align2(self, lines, check_rhymes):
+        """ Разметка двустрочника """
         plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
 
         # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
@@ -1473,35 +1581,32 @@ class PoetryStressAligner(object):
             if sum((pword.n_vowels>1) for pword in pline.pwords) >= 8:
                 raise ValueError('Line is too long: "{}"'.format(pline))
 
-        stressed_lines = [pline.get_stress_variants(self) for pline in plines]
-
         best_score = 0.0
         best_metre = None
         best_rhyme_scheme = None
-        best_variant = None
 
         for allow_stress_shift in [False, True]:
-            if best_score > 0.1:
-                break
+            #if best_score > 0.3:
+            #    break
+
+            # Заранее сгенерируем для каждого слова варианты спеллчека и ударения...
+            stressed_words_groups = [StressVariantsSlot.build(poetry_words=pline.pwords, aligner=self, allow_stress_shift=allow_stress_shift) for pline in plines]
 
             # Для каждой строки перебираем варианты разметки и оставляем по 2 варианта в каждом метре.
             for metre_name, metre_signature in meters:
                 best_scores = dict()
 
                 # В каждой строке перебираем варианты расстановки ударений.
-                for ipline, (pline, slines) in enumerate(zip(plines, stressed_lines)):
+                for ipline, pline in enumerate(plines):
                     best_scores[ipline] = dict()
 
-                    for ivar, sline in enumerate(slines):
-                        for prefix in [0, 1]:
-                            cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=allow_stress_shift)
-                            metre_mapping = cursor.map(sline, self)
+                    for prefix in [0, 1]:
+                        cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=True)
+                        metre_mappings = cursor.map(stressed_words_groups[ipline], self)
 
-                            if metre_mapping.stress_shift_count > 0:
-                                stressed_words = [m.word for m in metre_mapping.word_mappings]
-                                new_stress_line = LineStressVariant(pline, stressed_words, self)
-                            else:
-                                new_stress_line = sline
+                        for metre_mapping in metre_mappings[:2]:  # берем только 2(?) лучших варианта
+                            stressed_words = [m.word for m in metre_mapping.word_mappings]
+                            new_stress_line = LineStressVariant(pline, stressed_words, self)
 
                             if new_stress_line.get_rhyming_tail().is_ok():
                                 tail_str = new_stress_line.get_rhyming_tail().__repr__()
@@ -1514,7 +1619,7 @@ class PoetryStressAligner(object):
                                     best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
 
                 # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
-                # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
+                # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данного метра.
                 stressed_lines2 = [list() for _ in range(2)]
                 for iline, items2 in best_scores.items():
                     stressed_lines2[iline].extend(items2.values())
@@ -1532,7 +1637,7 @@ class PoetryStressAligner(object):
                         rhyme_scheme = 'AA'
                     else:
                         rhyme_scheme = '--'
-                        rhyme_score = 0.5
+                        rhyme_score = 0.75
 
                     total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
                     if total_score > best_score:
@@ -1559,123 +1664,99 @@ class PoetryStressAligner(object):
             if sum((pword.n_vowels>1) for pword in pline.pwords) >= 8:
                 raise ValueError('Line is too long: "{}"'.format(pline))
 
-        stressed_lines = [pline.get_stress_variants(self) for pline in plines]
-
         best_score = 0.0
         best_metre = None
         best_rhyme_scheme = None
-        best_variant = None
 
-        # Для каждой строки перебираем варианты разметки и оставляем по ~2 варианта в каждом метре.
-        for allow_prefix in [0, 1]:
-            # Предпочитаем разметку без сдвига метра на 1 слог вправо.
-            # Но если это помогает подогнать ритм под эталонный метр - пусть.
-            if best_score > 0.1:
-                break
-            if allow_prefix == 1:
-                prefixes = [0, 1]
-            else:
-                prefixes = [0]
+        for allow_stress_shift in [False, True]:
+            #if best_score > 0.3:
+            #    break
 
-            for allow_stress_shift in [False, True]:
-                #if best_score > 0.1:
-                    # Предпочитаем разметку, где не использовалось перемещение ударения, так как не всегда
-                    # это дает приемлемый результат. Напеример, вот в этом примере:
-                    #
-                    # Лю́ди, когда́ то века́ми тужи́ли,
-                    # Или весе́льем душу́ наполня́я,
-                    # Но, в ми́ре реа́льном руга́лись, дружи́ли,
-                    # Пе́сни ора́ли, друг дру́жку обня́в.
-                    #
-                    # на слове "душу" можно переместить ударение, и ритм совпадет с метром, но семантика получается странная.
-                #    break
+            # Заранее сгенерируем для каждого слова варианты спеллчека и ударения...
+            stressed_words_groups = [StressVariantsSlot.build(poetry_words=pline.pwords, aligner=self, allow_stress_shift=allow_stress_shift) for pline in plines]
 
-                for metre_name, metre_signature in meters:
-                    best_scores = dict()
+            # Для каждой строки перебираем варианты разметки и оставляем по ~2 варианта в каждом метре.
+            for metre_name, metre_signature in meters:
+                best_scores = dict()
 
-                    # В каждой строке перебираем варианты расстановки ударений.
-                    for ipline, (pline, slines) in enumerate(zip(plines, stressed_lines)):
-                        best_scores[ipline] = dict()
+                # В каждой строке перебираем варианты расстановки ударений.
+                for ipline, pline in enumerate(plines):
+                    best_scores[ipline] = dict()
 
-                        for ivar, sline in enumerate(slines):
-                            for prefix in prefixes:
-                                cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=allow_stress_shift)
-                                metre_mapping = cursor.map(sline, self)
+                    for prefix in [0, 1]:
+                        cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=True)
+                        for metre_mapping in cursor.map(stressed_words_groups[ipline], self):
+                            stressed_words = [m.word for m in metre_mapping.word_mappings]
+                            new_stress_line = LineStressVariant(pline, stressed_words, self)
 
-                                if metre_mapping.stress_shift_count > 0:
-                                    stressed_words = [m.word for m in metre_mapping.word_mappings]
-                                    new_stress_line = LineStressVariant(pline, stressed_words, self)
+                            if new_stress_line.get_rhyming_tail().is_ok():
+                                tail_str = new_stress_line.get_rhyming_tail().__repr__()
+                                score = metre_mapping.get_score()
+                                if tail_str not in best_scores[ipline]:
+                                    prev_score = -1e3
                                 else:
-                                    new_stress_line = sline
+                                    prev_score = best_scores[ipline][tail_str][0].get_score()
+                                if score > prev_score:
+                                    best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
 
-                                if new_stress_line.get_rhyming_tail().is_ok():
-                                    tail_str = new_stress_line.get_rhyming_tail().__repr__()
-                                    score = metre_mapping.get_score()
-                                    if tail_str not in best_scores[ipline]:
-                                        prev_score = -1e3
-                                    else:
-                                        prev_score = best_scores[ipline][tail_str][0].get_score()
-                                    if score > prev_score:
-                                        best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
+                # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
+                # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
+                stressed_lines2 = [list() for _ in range(4)]
+                for iline, items2 in best_scores.items():
+                    stressed_lines2[iline].extend(items2.values())
 
-                    # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
-                    # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
-                    stressed_lines2 = [list() for _ in range(4)]
-                    for iline, items2 in best_scores.items():
-                        stressed_lines2[iline].extend(items2.values())
+                vvx = list(itertools.product(*stressed_lines2))
+                for ivar, plinev in enumerate(vvx):
+                    # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
 
-                    vvx = list(itertools.product(*stressed_lines2))
-                    for ivar, plinev in enumerate(vvx):
-                        # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
+                    # Определяем рифмуемость
+                    rhyme_scheme = None
+                    rhyme_score = 1.0
 
-                        # Определяем рифмуемость
-                        rhyme_scheme = None
-                        rhyme_score = 1.0
+                    last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
 
-                        last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
+                    r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
+                    r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
+                    r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
+                    r12 = self.check_rhyming(last_pwords[1], last_pwords[2])
+                    r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
+                    r23 = self.check_rhyming(last_pwords[2], last_pwords[3])
 
-                        r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
-                        r02 = self.check_rhyming(last_pwords[0], last_pwords[2])
-                        r03 = self.check_rhyming(last_pwords[0], last_pwords[3])
-                        r12 = self.check_rhyming(last_pwords[1], last_pwords[2])
-                        r13 = self.check_rhyming(last_pwords[1], last_pwords[3])
-                        r23 = self.check_rhyming(last_pwords[2], last_pwords[3])
+                    rhyme_score = 1.0
+                    if r01 and r12 and r23:
+                        # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
+                        # желательно устранять из обучающего датасета.
+                        rhyme_scheme = 'AAAA'
+                    elif r02 and r13:
+                        rhyme_scheme = 'ABAB'
+                    elif r03 and r12:
+                        rhyme_scheme = 'ABBA'
+                    # 22-12-2021 добавлена рифмовка AABB
+                    elif r01 and r23:
+                        rhyme_scheme = 'AABB'
+                    # 28-12-2021 добавлена рифмовка "рубаи" AABA
+                    elif r01 and r03 and not r02:
+                        rhyme_scheme = 'AABA'
+                    # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
+                    elif r02 and not r13:
+                        rhyme_scheme = 'A-A-'
+                        rhyme_score = 0.75
+                    elif not r02 and r13:
+                        rhyme_scheme = '-A-A'
+                        rhyme_score = 0.75
+                    elif r12 and not r01 and not r23:
+                        rhyme_scheme = '-AA-'
+                        rhyme_score = 0.75
+                    else:
+                        rhyme_scheme = '----'
+                        rhyme_score = 0.50
 
-                        rhyme_score = 1.0
-                        if r01 and r12 and r23:
-                            # 22.04.2022 отдельно детектируем рифмовку AAAA, так как она зачастую выглядит очень неудачно и ее
-                            # желательно устранять из обучающего датасета.
-                            rhyme_scheme = 'AAAA'
-                        elif r02 and r13:
-                            rhyme_scheme = 'ABAB'
-                        elif r03 and r12:
-                            rhyme_scheme = 'ABBA'
-                        # 22-12-2021 добавлена рифмовка AABB
-                        elif r01 and r23:
-                            rhyme_scheme = 'AABB'
-                        # 28-12-2021 добавлена рифмовка "рубаи" AABA
-                        elif r01 and r03 and not r02:
-                            rhyme_scheme = 'AABA'
-                        # 21.05.2022 проверяем неполные рифмовки A-A- и -A-A
-                        elif r02 and not r13:
-                            rhyme_scheme = 'A-A-'
-                            rhyme_score = 0.75
-                        elif not r02 and r13:
-                            rhyme_scheme = '-A-A'
-                            rhyme_score = 0.75
-                        elif r12 and not r01 and not r23:
-                            rhyme_scheme = '-AA-'
-                            rhyme_score = 0.75
-                        else:
-                            rhyme_scheme = '----'
-                            rhyme_score = 0.50
-
-                        total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
-                        if total_score > best_score:
-                            best_score = total_score
-                            best_metre = metre_name
-                            best_rhyme_scheme = rhyme_scheme
-                            best_variant = plinev
+                    total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
+                    if total_score > best_score:
+                        best_score = total_score
+                        best_metre = metre_name
+                        best_rhyme_scheme = rhyme_scheme
+                        best_variant = plinev
 
         if best_variant is None:
             # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
@@ -2050,11 +2131,95 @@ if __name__ == '__main__':
             print('ERROR: score={} is too high for the bad poetry sample:\n\n{}'.format(alignment.score, '\n'.join(poem)))
 
     true_markups = [
+        ("""что тру́дно мне́ дало́сь на сва́дьбе
+        так э́то де́лать ви́д что я́
+        не ви́жу у отца́ неве́сты
+        ружья́""", "-A-A"),
+
+        ("""я́ полго́да е́ла
+        ме́рзких овоще́й
+        зе́ркало скажи́ мне
+        я́ ли все́х тоще́й""", "-A-A"),
+
+        #("""От Го́спода нас отделя́ет вре́мя.""", ""),
+
+        #("""враги́ не то́лько обстреля́ли
+        #око́пы моего́ полка́
+        #но и на сте́ну мне́ вконта́кте
+        #понаписа́ли ме́рзких сло́в""", "----"),
+
+        ("""Но, уже́ тоску́я
+        В ро́т тебя́ кладу́ я
+        Та́к пробле́мы не́т
+        Ста́л я людое́д""", "AABB"),
+
+        #("""уста́вший прихожу́ с рабо́ты
+        #жена́ такти́чна и мила́
+        #или хенда́й опя́ть разби́ла
+        #или в суббо́ту тё́щу ждё́м""", "----"),
+
+        ("""бок о́ бок ле́чь""", ""),
+        ("""Идё́т, бычо́к, кача́ется""", ""),
+        ("""я ми́лого узна́ю по похо́дке""", ""),
+        ("""Без конца́ и без кра́ю мечта́!""", ""),
+        ("""В по́лном разга́ре страда́ дереве́нская""", ""),
+        ("""В глубо́кой тесни́не Дарья́ла""", ""),
+
+        ("""Ана́пест, ана́пест, ана́пест –
+        Вот та́к амфибра́хий звучи́т!""", "--"),
+
+        ("""В ра́бстве спасё́нное
+        Се́рдце наро́дное""", "--"),
+
+        ("""Ночева́ла ту́чка золота́я
+        На груди́ утё́са-велика́на...""", "--"),
+
+        ("""Мой дя́дя са́мых че́стных пра́вил,
+        Когда́ не в шу́тку занемо́г...""", "--"),
+
+        ("""Волчи́ца ты́! Тебя́ я презира́ю!
+        К Птибурдуко́ву ты́ ухо́дишь от меня́!""", "--"),
+
         ("""два ме́рса джи́п четы́ре во́львы
         совсе́м сбеси́лись с жи́ру что́ ль вы""", "AA"),
 
         ("""Зимы́ ждала́, ждала́ приро́да…
         Она́ пришла́ через полго́да.""", "AA"),
+
+        ("""Бу́ря мгло́ю не́бо кро́ет,
+        Ви́хри сне́жные крутя́;
+        То́, как зве́рь, она́ заво́ет,
+        То́ запла́чет, ка́к дитя́…""", "ABAB"),
+
+        ("""Выхожу́ оди́н я на доро́гу;
+        Скво́зь тума́н кремни́стый пу́ть блести́т;
+        Но́чь тиха́. Пусты́ня вне́млет Бо́гу,
+        И звезда́ с звездо́ю говори́т.""", "ABAB"),
+
+        ("""В не́бе та́ют облака́,
+        И, лучи́стая на зно́е,
+        В и́скрах ка́тится река́,
+        Сло́вно зе́ркало стально́е.""", "ABAB"),
+
+        ("""Ночева́ла ту́чка золота́я
+        На груди́ утё́са - велика́на;
+        У́тром в пу́ть она́ умча́лась ра́но,
+        По лазу́ри ве́село игра́я…""", "ABBA"),
+
+        ("""Ты погрусти́, когда́ умрё́т поэ́т,
+        Поку́да зво́н ближа́йшей из церкве́й
+        Не возвести́т, что э́тот ни́зкий све́т
+        Я променя́л на ни́зший ми́р черве́й.""", "ABAB"),
+
+        ("""Ту́чки небе́сные, ве́чные стра́нники!
+        Сте́пью лазу́рною, це́пью жемчу́жною
+        Мчи́тесь вы, бу́дто как я́ же, изгна́нники
+        С ми́лого се́вера в сто́рону ю́жную.""", "ABAB"),
+
+        ("""Есть в напе́вах твои́х сокрове́нных
+        Рокова́я о ги́бели ве́сть.
+        Есть прокля́тье заве́тов свяще́нных,
+        Поруга́ние сча́стия е́сть.""", "ABAB"),
 
         ("""на бра́чном ло́же я́ был за́гнан в у́гол""", ""),
         ("""мечу́ икру́ цвета́ в ассортиме́нте""", ""),
@@ -2111,7 +2276,6 @@ if __name__ == '__main__':
         ("""На у́шко я́ себе́ шепну́ла пра́вду.""", ""),
         ("""Быть у́мной в на́шей жи́зни неприли́чно""", ""),
         ("""Ино́й раз дураки́ быва́ют пра́вы.""", ""),
-        ("""От Го́спода нас отделя́ет вре́мя.""", ""),
         ("""МозгИ́ ины́м давно́ пора́ прове́трить.""", ""),
         ("""Как де́ньги мне́ найти́: они́ не па́хнут.""", ""),
         ("""Ты про́жил жи́знь с поэ́зией в обни́мку?""", ""),
@@ -2179,7 +2343,7 @@ if __name__ == '__main__':
         ("""смеша́лись ко́ни ба́бы и́збы
         не промахну́цца б не дай бо́г""", "--"),
 
-        ("""нашли́ приё́м вы против ло́му
+        ("""нашли́ приё́м вы про́тив ло́му
         прям пе́ред те́м как впа́ли в ко́му""", "AA"),
 
         ("""что зна́чит ви́димся не ча́сто?
@@ -2359,10 +2523,6 @@ if __name__ == '__main__':
         за то́ что ты́ созда́л вади́ма
         простра́нство вре́мя и нтерне́т""", "----"),
 
-        ("""враги́ не то́лько обстреля́ли
-        око́пы моего́ полка́
-        но и на сте́ну мне́ вконта́кте
-        понаписа́ли ме́рзких сло́в""", "----"),
 
         ("""у ва́с ли не́т ли огоньку́ ли
         ай хорошо́ благодарю́
@@ -2419,9 +2579,9 @@ if __name__ == '__main__':
         Гляди́т на блю́дце.""", "ABAB"),
 
         ("""А где хра́мы и попы́
-        Та́м к нау́ке все́ слепы́
+        Там к нау́ке все́ слепы́
         Окропя́т, махну́т кади́лом
-        Та́к заго́нят все́х в моги́лу""", "AABB"),
+        Так заго́нят все́х в моги́лу""", "AABB"),
 
         ("""Но дурака́м везё́т, и э́то то́чно
         Хотя́ никто́ не зна́ет наперё́д
@@ -2433,10 +2593,10 @@ if __name__ == '__main__':
         Да́же ста́рым не́т поко́я
         Чё́рте что́ на у́м идё́т""", "ABAB"),
 
-        ("""С то́й поры́, когда́ черну́ха
+        ("""С той поры́, когда́ черну́ха
         На душе́, с овчи́нку све́т
-        То́лько вспо́мню ту́ стару́ху
-        Та́к хандры́ в поми́не не́т""", "ABAB"),
+        Только вспо́мню ту́ стару́ху
+        Так хандры́ в поми́не не́т""", "ABAB"),
 
         ("""И ми́р предста́л как в стра́шной ска́зке
         Пусты́ доро́ги про́бок не́т
@@ -2474,9 +2634,9 @@ if __name__ == '__main__':
         Что́бы ду́мали ребя́та""", "ABAB"),
 
         ("""И труба́ прое́кту с га́зом
-У тебя́ все намази́
-Возверне́м реа́льность сра́зу
-Ты́ им ви́рус привези́""", "ABAB"),
+        У тебя́ все намази́
+        Возверне́м реа́льность сра́зу
+        Ты им ви́рус привези́""", "ABAB"),
 
         ("""Даны́ кани́кулы – во бла́го
         И, что́бы вре́мя не теря́ть
@@ -2534,9 +2694,9 @@ if __name__ == '__main__':
         твоя́ метаморфо́за""", "ABAB"),
 
         ("""Любо́й рождё́н для по́иска и ри́ска
-Любо́му сча́стье хо́чется найти́
-Ины́м суха́рик вместо ка́ши в ми́ске
-Други́м полё́т по Мле́чному Пути́""", "ABAB"),
+        Любо́му сча́стье хо́чется найти́
+        Ины́м суха́рик вме́сто ка́ши в ми́ске
+        Други́м полё́т по Мле́чному Пути́""", "ABAB"),
 
         ("""Беспе́чен ле́с, не слы́ша топора́
         Дове́рчив, ка́к младе́нец в колыбе́ли
@@ -2612,11 +2772,6 @@ if __name__ == '__main__':
         про жи́знь спроси́ла про семью́
         и до́лго пла́кала в поду́шку
         мою́""", "-A-A"),
-
-        #("""что тру́дно мне дало́сь на сва́дьбе
-        #так э́то де́лать ви́д что я́
-        #не ви́жу у отца́ неве́сты
-        #ружья́""", "-A-A"),
 
         ("""меж на́ми пробежа́ла и́скра
         а у тебя́ в рука́х кани́стра""", 'AA'),
@@ -2726,7 +2881,7 @@ if __name__ == '__main__':
         Како́й… поры́в её́ туда́ занё́с
         Одну́. И без страхо́вки почему́-то""", "ABAB"),
 
-        ("""взял вместо во́дки молока́ я
+        ("""взял вме́сто во́дки молока́ я
         присни́тся же хуйня́ така́я""", "AA"),
 
         ("""два па́рных отыска́л носка́ я
@@ -2773,11 +2928,6 @@ if __name__ == '__main__':
 
         ("""о всемогу́щий си́лы да́й нам
         в борьбе́ с засте́ночным раммшта́йном""", "AA"),
-
-        ("""Но, уже́ тоску́я
-        В ро́т тебя́ кладу́ я
-        Та́к пробле́мы не́т
-        Ста́л я людое́д""", "AABB"),
 
         ("""топоро́м не на́до
         ба́ловать в лесу́
@@ -2939,7 +3089,7 @@ if __name__ == '__main__':
         ("""оле́га би́ли все́м орке́стром
         и научи́лись извлека́ть
         отли́чный во́пыль в до мажо́ре
-        путём уда́ров и щипко́в""", "----"),
+        путё́м уда́ров и щипко́в""", "----"),
 
         ("""оле́га су́нули в скафа́ндер
         и запусти́ли на луну́
@@ -2959,7 +3109,7 @@ if __name__ == '__main__':
         ("""портно́вским ме́тром укоко́шен
         в перми́ замо́рский моделье́р
         а не́фиг со свои́м дюймо́вым
-        к портны́м в чужо́е ателье́""", "----"),
+        к портны́м в чужо́е ателье́""", "-A-A"),
 
         ("""пойде́м оле́жка погуля́ем
         окса́на ще́лкнула замко́м
@@ -2980,11 +3130,6 @@ if __name__ == '__main__':
         то́лько ли́шь одна́
         почему́ у зо́и
         ко́нчилась спина́""", "-A-A"),
-
-        ("""я́ полго́да е́ла
-        ме́рзких овоще́й
-        зе́ркало скажи́ мне
-        я́ ли все́х тоще́й""", "-A-A"),
 
         ("""ты́ уже́ не мо́лод
         я́ не молода́
@@ -3136,11 +3281,6 @@ if __name__ == '__main__':
         в шприце́ у ка́ждого по ни́мфе
         и ве́ны взду́лись на рука́х""", "----"),
 
-        ("""уста́вший прихожу́ с рабо́ты
-        жена́ такти́чна и мила́
-        или хенда́й опя́ть разби́ла
-        или в суббо́ту тё́щу ждё́м""", "----"),
-
         ("""поля́ки шли́ за лжеоле́гом
         чтобы забра́ть себе́ москву́
         но настоя́щих два́ оле́га
@@ -3179,7 +3319,7 @@ if __name__ == '__main__':
 
         ("""гляди́ мне про́дали карти́ну
         како́й весё́ленький пейза́ж
-        а где́ пове́сишь перед се́йфом
+        а где́ пове́сишь пе́ред се́йфом
         не за́ ж""", "-A-A"),
 
         ("""уколи́ сестра́ мне
@@ -3301,7 +3441,7 @@ if __name__ == '__main__':
             #    print(pline.stress_signature_str)
             pred_markup = alignment.get_stressed_lines()
             expected_markup = '\n'.join(poem)
-            if pred_markup.replace('ё', 'е') != expected_markup.replace('ё', 'е'):
+            if pred_markup.replace('ё', 'е').replace(' - ', '-') != expected_markup.replace('ё', 'е').replace(' - ', '-'):
                 print('Markup test failed')
                 print('Expected:\n{}\n\nOutput:\n{}'.format(expected_markup, pred_markup))
                 exit(0)
