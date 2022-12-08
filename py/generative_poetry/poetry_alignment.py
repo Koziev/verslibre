@@ -133,11 +133,10 @@ class MetreMappingResult(object):
             for word_mapping in self.word_mappings:
                 sx.append(str(word_mapping))
 
-            sx.append('〚{:6.2g}〛'.format(self.score))
-
+            sx.append('〚' + '{:6.2g}'.format(self.score).strip() + '〛')
             return ' '.join(sx)
         else:
-            return '<<< EMPTY >>>'
+            return '««« EMPTY »»»'
 
     def get_score(self):
         stress_shift_factor = 1.0 if self.stress_shift_count < 2 else pow(0.5, self.stress_shift_count)
@@ -161,16 +160,15 @@ class WordMappingResult(object):
     def __repr__(self):
         s = self.word.get_stressed_form()
         if self.total_score != 1.0:
-            s += '[{:5.2g}]'.format(self.total_score)
+            s += '[' + '{:5.2g}'.format(self.total_score).strip() + ']'
         return s
 
 
 class MetreMappingCursor(object):
-    def __init__(self, metre_signature: List[int], prefix: int, allow_stress_shift: bool):
+    def __init__(self, metre_signature: List[int], prefix: int):
         self.prefix = prefix
         self.metre_signature = metre_signature
         self.length = len(metre_signature)
-        self.allow_stress_shift = allow_stress_shift
 
     def get_stress(self, cursor) -> int:
         """Возвращает ударность, ожидаемую в текущей позиции"""
@@ -355,7 +353,7 @@ class PoetryWord(object):
             if clower in 'уеыаоэёяию':
                 self.trailing_consonants = 0
                 n_vowels += 1
-            elif c in 'бвгджзклмнпрстфхцчшщ':
+            elif clower in 'бвгджзклмнпрстфхцчшщ':
                 if n_vowels == 0:
                     self.leading_consonants += 1
                 else:
@@ -599,8 +597,22 @@ class StressVariantsSlot(object):
 
     def __repr__(self):
         s = ''
+
         if self.stressed_words:
             s += '[ ' + ' | '.join(map(str, self.stressed_words)) + ' ]'
+        else:
+            s += '∅'
+
+        if self.next_nodes:
+            if len(self.next_nodes) == 1:
+                s += ' ↦ '
+                s += str(self.next_nodes[0])
+            else:
+                s += ' ⇉ ⦃'
+                for i, n in enumerate(self.next_nodes, start=1):
+                    s += ' 〚{}〛 {}'.format(i, str(n))
+                s += '⦄'
+
         return s
 
     @staticmethod
@@ -815,10 +827,10 @@ class LineStressVariant(object):
         i = len(self.stressed_words)-1
         while i >= 0:
             pword = self.stressed_words[i]
-            if pword.new_stress_pos != -1 or count_vowels(pword.poetry_word.form) > 1:
+            if pword.new_stress_pos != -1:  # or pword.poetry_word.n_vowels > 1:
                 stressed_word = pword
 
-                if pword.poetry_word.form in 'аеёиоуыэюя':
+                if re.match(r'^[аеёиоуыэюя]$', pword.poetry_word.form, flags=re.I) is not None:
                     # Ситуация, когда рифмуется однобуквенное слово, состоящее из гласной:
                     #
                     # хочу́ отшлё́пать анако́нду
@@ -844,7 +856,7 @@ class LineStressVariant(object):
 
         s = '〚' + ' '.join(w.__repr__() for w in self.stressed_words) + '〛'
         if self.total_score != 1.0:
-            s += '({:5.3f})'.format(self.total_score)
+            s += '(≈{:5.3f})'.format(self.total_score)
         return s
 
     def get_stressed_line(self):
@@ -1555,7 +1567,7 @@ class PoetryStressAligner(object):
             stressed_words_chain = StressVariantsSlot.build(poetry_words=pline1.pwords, aligner=self, allow_stress_shift=allow_stress_shift)
 
             for metre_name, metre_signature in meters:
-                cursor = MetreMappingCursor(metre_signature, prefix=0, allow_stress_shift=allow_stress_shift)
+                cursor = MetreMappingCursor(metre_signature, prefix=0)
                 for metre_mapping in cursor.map(stressed_words_chain, self):
                     if metre_mapping.get_score() > best_score:
                         best_score = metre_mapping.get_score()
@@ -1584,6 +1596,7 @@ class PoetryStressAligner(object):
         best_score = 0.0
         best_metre = None
         best_rhyme_scheme = None
+        best_variant = None
 
         for allow_stress_shift in [False, True]:
             #if best_score > 0.3:
@@ -1601,7 +1614,7 @@ class PoetryStressAligner(object):
                     best_scores[ipline] = dict()
 
                     for prefix in [0, 1]:
-                        cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=True)
+                        cursor = MetreMappingCursor(metre_signature, prefix=prefix)
                         metre_mappings = cursor.map(stressed_words_groups[ipline], self)
 
                         for metre_mapping in metre_mappings[:2]:  # берем только 2(?) лучших варианта
@@ -1667,6 +1680,7 @@ class PoetryStressAligner(object):
         best_score = 0.0
         best_metre = None
         best_rhyme_scheme = None
+        best_variant = None
 
         for allow_stress_shift in [False, True]:
             #if best_score > 0.3:
@@ -1684,7 +1698,7 @@ class PoetryStressAligner(object):
                     best_scores[ipline] = dict()
 
                     for prefix in [0, 1]:
-                        cursor = MetreMappingCursor(metre_signature, prefix=prefix, allow_stress_shift=True)
+                        cursor = MetreMappingCursor(metre_signature, prefix=prefix)
                         for metre_mapping in cursor.map(stressed_words_groups[ipline], self):
                             stressed_words = [m.word for m in metre_mapping.word_mappings]
                             new_stress_line = LineStressVariant(pline, stressed_words, self)
@@ -2131,6 +2145,14 @@ if __name__ == '__main__':
             print('ERROR: score={} is too high for the bad poetry sample:\n\n{}'.format(alignment.score, '\n'.join(poem)))
 
     true_markups = [
+        ("""Ты чужо́ю никогда́ мне не была́,
+        Просто, бу́сы си́ним би́сером - да пО́ полу.""", "--"),
+
+        ("""хочу́ отшлё́пать анако́нду
+        но непоня́тно по чему́
+        вот у слона́ гора́здо ши́ре
+        чем у́""", "-A-A"),
+
         ("""что тру́дно мне́ дало́сь на сва́дьбе
         так э́то де́лать ви́д что я́
         не ви́жу у отца́ неве́сты
