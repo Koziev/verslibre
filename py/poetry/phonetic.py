@@ -719,6 +719,10 @@ def are_rhymed_syllables(syllab1, syllab2):
 def extract_ending_vc(s):
     # вернет последние буквы слова, среди которых минимум 1 гласная и 1 согласная
 
+    e = {'твоего': 'во', 'моего': 'во'}.get(s)
+    if e is not None:
+        return e
+
     # мягкий знак и после него йотированная гласная:
     #
     # семья
@@ -757,7 +761,7 @@ def extract_ending_vc(s):
     #      ^^
     r = re.search('([жшщ])ю$', s)
     if r:
-        return r.group(1) + 'ю'
+        return r.group(1) + 'у'
 
     # МАМА
     #   ^^
@@ -882,67 +886,71 @@ def extract_ending_prononciation_after_stress(accents, word, stress, ud_tags, un
     if len(word) == 1:
         return unstressed_prefix_transcription + word + unstressed_tail_transcription
 
-    ending = None
-    v_counter = 0
-    for i, c in enumerate(word.lower()): # 25.06.2022 приводим к нижнему регистру
-        if c in "уеыаоэёяию":
-            v_counter += 1
-            if v_counter == stress:
-                if i == len(word) - 1 and len(unstressed_tail) == 0:
-                    # Ударная гласная в конце слова, берем последние 2 или 3 буквы
-                    # ГУБА
-                    #   ^^
-                    ending = extract_ending_vc(word)
 
-                    # 01.02.2022 неударная "о" перед ударной гласной превращается в "а":  своя ==> сваЯ
-                    if len(ending) >= 2 and ending[-2] == 'о' and ending[-1] in 'аеёиоуыэюя':
-                        ending = ending[:-2] + 'а' + ending[-1]
+    lword = word.lower()
 
-                else:
-                    ending = word[i:]
-                    if ud_tags is not None and ('ADJ' in ud_tags or 'DET' in ud_tags) and ending == 'ого':
-                        # Меняем "люб-ОГО" на "люб-ОВО"
-                        ending = 'ово'
+    ending = {'его': 'во', 'него': 'во', 'сего': 'во', 'того': 'во', 'всякого': 'якава'}.get(lword)
+    if ending is None:
+        v_counter = 0
+        for i, c in enumerate(lword): # 25.06.2022 приводим к нижнему регистру
+            if c in "уеыаоэёяию":
+                v_counter += 1
+                if v_counter == stress:
+                    if i == len(word) - 1 and len(unstressed_tail) == 0:
+                        # Ударная гласная в конце слова, берем последние 2 или 3 буквы
+                        # ГУБА
+                        #   ^^
+                        ending = extract_ending_vc(word)
 
-                    if ending.startswith('е'):
-                        # 01.02.2022 меняем ударную "е" на "э": летом==>л'Этом
-                        ending = 'э' + ending[1:]
-                    elif ending.startswith('я'):
-                        # 01.02.2022 меняем ударную "я" на "а": мячик==>м'Ачик
-                        ending = 'а' + ending[1:]
-                    elif ending.startswith('ё'):
-                        # 01.02.2022 меняем ударную "ё" на "о": мёдом==>м'Одом
-                        ending = 'о' + ending[1:]
-                    elif ending.startswith('ю'):
-                        # 01.02.2022 меняем ударную "ю" на "у": люся==>л'Уся
-                        ending = 'у' + ending[1:]
-                    elif ending.startswith('и'):
-                        # 01.02.2022 меняем ударную "и" на "ы": сливы==>сл'Ывы, живы==>жЫвы
-                        ending = 'ы' + ending[1:]
+                        # 01.02.2022 неударная "о" перед ударной гласной превращается в "а":  своя ==> сваЯ
+                        if len(ending) >= 2 and ending[-2] == 'о' and ending[-1] in 'аеёиоуыэюя':
+                            ending = ending[:-2] + 'а' + ending[-1]
 
-                if len(ending) < len(word):
-                    c2 = word[-len(ending)-1]
-                    if c2 in 'цшщ' and ending[0] == 'и':
-                        # меняем ЦИ -> ЦЫ
-                        ending = 'ы' + ending[1:]
+                    else:
+                        ending = word[i:]
+                        if ud_tags is not None and ('ADJ' in ud_tags or 'DET' in ud_tags) and ending == 'ого':
+                            # Меняем "люб-ОГО" на "люб-ОВО"
+                            ending = 'ово'
 
-                # if ending.endswith('ь'):  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ"
-                #     ending = ending[:-1]
-                #
-                # if ending.endswith('д'):  # оглушаем последнюю "д": ВЗГЛЯД
-                #     ending = ending[:-1] + 'т'
-                # elif ending.endswith('ж'):  # оглушаем последнюю "ж": ЁЖ
-                #     ending = ending[:-1] + 'ш'
-                # elif ending.endswith('з'):  # оглушаем последнюю "з": МОРОЗ
-                #     ending = ending[:-1] + 'с'
-                # #elif ending.endswith('г'):  # оглушаем последнюю "г": БОГ
-                # #    ending = ending[:-1] + 'х'
-                # elif ending.endswith('б'):  # оглушаем последнюю "б": ГРОБ
-                #     ending = ending[:-1] + 'п'
-                # elif ending.endswith('в'):  # оглушаем последнюю "в": КРОВ
-                #     ending = ending[:-1] + 'ф'
+                        if ending.startswith('е'):
+                            # 01.02.2022 меняем ударную "е" на "э": летом==>л'Этом
+                            ending = 'э' + ending[1:]
+                        elif ending.startswith('я'):
+                            # 01.02.2022 меняем ударную "я" на "а": мячик==>м'Ачик
+                            ending = 'а' + ending[1:]
+                        elif ending.startswith('ё'):
+                            # 01.02.2022 меняем ударную "ё" на "о": мёдом==>м'Одом
+                            ending = 'о' + ending[1:]
+                        elif ending.startswith('ю'):
+                            # 01.02.2022 меняем ударную "ю" на "у": люся==>л'Уся
+                            ending = 'у' + ending[1:]
+                        elif ending.startswith('и'):
+                            # 01.02.2022 меняем ударную "и" на "ы": сливы==>сл'Ывы, живы==>жЫвы
+                            ending = 'ы' + ending[1:]
 
-                break
+                    if len(ending) < len(word):
+                        c2 = word[-len(ending)-1]
+                        if c2 in 'цшщ' and ending[0] == 'и':
+                            # меняем ЦИ -> ЦЫ
+                            ending = 'ы' + ending[1:]
+
+                    # if ending.endswith('ь'):  # убираем финальный мягкий знак: "ВОЗЬМЁШЬ"
+                    #     ending = ending[:-1]
+                    #
+                    # if ending.endswith('д'):  # оглушаем последнюю "д": ВЗГЛЯД
+                    #     ending = ending[:-1] + 'т'
+                    # elif ending.endswith('ж'):  # оглушаем последнюю "ж": ЁЖ
+                    #     ending = ending[:-1] + 'ш'
+                    # elif ending.endswith('з'):  # оглушаем последнюю "з": МОРОЗ
+                    #     ending = ending[:-1] + 'с'
+                    # #elif ending.endswith('г'):  # оглушаем последнюю "г": БОГ
+                    # #    ending = ending[:-1] + 'х'
+                    # elif ending.endswith('б'):  # оглушаем последнюю "б": ГРОБ
+                    #     ending = ending[:-1] + 'п'
+                    # elif ending.endswith('в'):  # оглушаем последнюю "в": КРОВ
+                    #     ending = ending[:-1] + 'ф'
+
+                    break
 
     if not ending:
         # print('ERROR@385 word1={} stress1={}'.format(word1, stress1))
@@ -1653,6 +1661,24 @@ if __name__ == '__main__':
     # =========================================================
     # Поверка точной рифмовки слов без неоднозначностей
     # =========================================================
+
+    r = rhymed(accents, 'никакого', ['ADJ'], 'большого', ['ADJ'])
+    assert(r is True)
+
+    r = rhymed(accents, 'трепещю', [], 'лещу', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'трепещя', [], 'леща', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'его', [], 'твоего', ['ADJ'])
+    assert(r is True)
+
+    r = rhymed(accents, 'всякого', ['ADJ'], 'Якова', [])
+    assert(r is True)
+
+    r = rhymed(accents, 'его', [], 'божество', [])
+    assert(r is True)
 
     r = rhymed(accents, 'проём', [], 'втроём', [])
     assert(r is True)
