@@ -15,6 +15,7 @@
 22.06.2022 в артишоках для последней строки с одним словом для OOV делаем перебор всех вариантов ударности.
 04.08.2022 добавлен учет 3-словных словосочетаний типа "бок О бок"
 06.12.2022 полная переработка алгоритма расстановк ударений: оптимизация, подготовка к использованию спеллчекера
+09.12.2022 Тесты ударятора вынесены в отдельный файл.
 """
 
 import collections
@@ -29,8 +30,6 @@ import re
 from typing import List, Set, Dict, Tuple, Optional
 
 from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy2
-from generative_poetry.udpipe_parser import UdpipeParser
-from generative_poetry.stanza_parser import StanzaParser
 from generative_poetry.metre_classifier import get_syllables
 from generative_poetry.whitespace_normalization import normalize_whitespaces
 
@@ -184,6 +183,7 @@ class MetreMappingCursor(object):
         start_results = [MetreMappingResult(self.prefix)]
         final_results = []
         self.map_chain(prev_node=stressed_words_chain, prev_results=start_results, aligner=aligner, final_results=final_results)
+        final_results = sorted(final_results, key=lambda z: -z.get_score())
         return final_results
 
     def map_chain(self, prev_node, prev_results, aligner, final_results):
@@ -625,76 +625,77 @@ class StressVariantsSlot(object):
         # бок О бок
         if len(poetry_words) > 2:
             lword1 = pword.form.lower()
-            if lword1 in aligner.collocation3_first:
-                lword2 = poetry_words[1].form.lower()
-                lword3 = poetry_words[2].form.lower()
+            lword2 = poetry_words[1].form.lower()
+            lword3 = poetry_words[2].form.lower()
+            key = (lword1, lword2, lword3)
+            collocs = aligner.collocations.get(key, None)
+            if collocs is not None:
+                for colloc in collocs:
+                    if colloc.stressed_word_index == 0:
+                        # первое слово становится ударным, второе и третье - безударные
+                        stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
+                        stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                        stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
+                    elif colloc.stressed_word_index == 1:
+                        # первое слово становится безударным, второе - ударное, третье - безударное
+                        stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                        stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
+                        stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
+                    else:
+                        # первое и второе слово безударные, третье - ударное
+                        stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                        stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                        stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=colloc.stress_pos, score=1.0)
 
-                for colloc in aligner.collocations:
-                    if len(colloc) == 3:
-                        if colloc.hit3(lword1, lword2, lword3):
-                            if colloc.stressed_word_index == 0:
-                                # первое слово становится ударным, второе и третье - безударные
-                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
-                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
-                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
-                            elif colloc.stressed_word_index == 1:
-                                # первое слово становится безударным, второе - ударное, третье - безударное
-                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
-                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
-                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=-1, score=1.0)
-                            else:
-                                # первое и второе слово безударные, третье - ударное
-                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
-                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
-                                stressed_word3 = WordStressVariant(poetry_words[2], new_stress_pos=colloc.stress_pos, score=1.0)
+                    next_node = StressVariantsSlot()
+                    next_node.stressed_words = [stressed_word1]
 
-                            next_node = StressVariantsSlot()
-                            next_node.stressed_words = [stressed_word1]
+                    next_node2 = StressVariantsSlot()
+                    next_node2.stressed_words = [stressed_word2]
+                    next_node.next_nodes = [next_node2]
 
-                            next_node2 = StressVariantsSlot()
-                            next_node2.stressed_words = [stressed_word2]
-                            next_node.next_nodes = [next_node2]
+                    next_node3 = StressVariantsSlot()
+                    next_node3.stressed_words = [stressed_word3]
+                    next_node2.next_nodes = [next_node3]
 
-                            next_node3 = StressVariantsSlot()
-                            next_node3.stressed_words = [stressed_word3]
-                            next_node2.next_nodes = [next_node3]
+                    if len(poetry_words) > 3:
+                        next_node3.next_nodes = StressVariantsSlot.build_next(poetry_words[3:], aligner, allow_stress_shift=allow_stress_shift)
 
-                            if len(poetry_words) > 3:
-                                next_node3.next_nodes = StressVariantsSlot.build_next(poetry_words[3:], aligner, allow_stress_shift=allow_stress_shift)
+                    next_nodes.append(next_node)
 
-                            return [next_node]
-
+                return [next_node]
 
         # Проверяем особый случай двусловных словосочетаний, в которых ударение ВСЕГДА падает не так, как обычно:
         # друг др^уга
         if len(poetry_words) > 1:
             lword1 = pword.form.lower()
-            if lword1 in aligner.collocation2_first:
-                lword2 = poetry_words[1].form.lower()
+            lword2 = poetry_words[1].form.lower()
+            key = (lword1, lword2)
+            collocs = aligner.collocations.get(key, None)
+            if collocs is not None:
+                for colloc in collocs:
+                    if colloc.stressed_word_index == 0:
+                        # первое слово становится ударным, второе - безударное
+                        stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
+                        stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
+                    else:
+                        # первое слово становится безударным, второе - ударное
+                        stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
+                        stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
 
-                for colloc in aligner.collocations:
-                    if len(colloc) == 2:
-                        if colloc.hit2(lword1, lword2):
-                            if colloc.stressed_word_index == 0:
-                                # первое слово становится ударным, второе - безударное
-                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=colloc.stress_pos, score=1.0)
-                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=-1, score=1.0)
-                            else:
-                                # первое слово становится безударным, второе - ударное
-                                stressed_word1 = WordStressVariant(poetry_words[0], new_stress_pos=-1, score=1.0)
-                                stressed_word2 = WordStressVariant(poetry_words[1], new_stress_pos=colloc.stress_pos, score=1.0)
+                    next_node = StressVariantsSlot()
+                    next_node.stressed_words = [stressed_word1]
 
-                            next_node = StressVariantsSlot()
-                            next_node.stressed_words = [stressed_word1]
+                    next_node2 = StressVariantsSlot()
+                    next_node2.stressed_words = [stressed_word2]
+                    next_node.next_nodes = [next_node2]
 
-                            next_node2 = StressVariantsSlot()
-                            next_node2.stressed_words = [stressed_word2]
-                            next_node.next_nodes = [next_node2]
+                    if len(poetry_words) > 2:
+                        next_node2.next_nodes = StressVariantsSlot.build_next(poetry_words[2:], aligner, allow_stress_shift=allow_stress_shift)
 
-                            if len(poetry_words) > 2:
-                                next_node2.next_nodes = StressVariantsSlot.build_next(poetry_words[2:], aligner, allow_stress_shift=allow_stress_shift)
+                    next_nodes.append(next_node)
 
-                            return [next_node]
+                return next_nodes
 
         # Самый типичный путь - получаем варианты ударения для слова с их весами.
         next_node = StressVariantsSlot()
@@ -1116,44 +1117,44 @@ class PoetryLine(object):
     def __repr__(self):
         return ' '.join([pword.__repr__() for pword in self.pwords])
 
-    def get_stress_variants(self, aligner):
-        wordx = [pword.get_stress_variants(aligner) for pword in self.pwords]
-        variants = [LineStressVariant(self, swords, aligner) for swords in itertools.product(*wordx)]
-
-        # 23-01-2022 добавляем варианты, возникающие из-за особых ударений в словосочетаниях типа "пО полю"
-        lwords = [w.form.lower() for w in self.pwords]
-        if any((w in aligner.collocation2_first) for w in lwords) and any((w in aligner.collocation2_second) for w in lwords):
-            # В строке возможно присутствует одно из особых словосочетаний длиной 2
-            for colloc in aligner.collocations:
-                add_variants = []
-                if len(colloc) == 2:
-                    for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
-                        if colloc.hit2(w1, w2):
-                            # из всех вариантов в variants делаем еще по 1 варианту
-                            for variant in variants:
-                                v = colloc.produce_stressed_line(variant, aligner)
-                                add_variants.append(v)
-
-                if add_variants:
-                    variants.extend(add_variants)
-
-        # 04-08-2022 добавляем варианты для триграмм типа "бок О бок"
-        if any((w in aligner.collocation3_first) for w in lwords) and any((w in aligner.collocation3_second) for w in lwords) and any((w in aligner.collocation3_third) for w in lwords):
-            # В строке возможно присутствует одно из особых словосочетаний длиной 3
-            add_variants = []
-            for colloc in aligner.collocations:
-                if len(colloc) == 3:
-                    for i1, (w1, w2, w3) in enumerate(zip(lwords, lwords[1:], lwords[2:])):
-                        if colloc.hit3(w1, w2, w3):
-                            # из всех вариантов в variants делаем еще по 1 варианту
-                            for variant in variants:
-                                v = colloc.produce_stressed_line(variant, aligner)
-                                add_variants.append(v)
-
-            if add_variants:
-                variants.extend(add_variants)
-
-        return variants
+    # def get_stress_variants(self, aligner):
+    #     wordx = [pword.get_stress_variants(aligner) for pword in self.pwords]
+    #     variants = [LineStressVariant(self, swords, aligner) for swords in itertools.product(*wordx)]
+    #
+    #     # 23-01-2022 добавляем варианты, возникающие из-за особых ударений в словосочетаниях типа "пО полю"
+    #     lwords = [w.form.lower() for w in self.pwords]
+    #     if any((w in aligner.collocation2_first) for w in lwords) and any((w in aligner.collocation2_second) for w in lwords):
+    #         # В строке возможно присутствует одно из особых словосочетаний длиной 2
+    #         for colloc in aligner.collocations:
+    #             add_variants = []
+    #             if len(colloc) == 2:
+    #                 for i1, (w1, w2) in enumerate(zip(lwords, lwords[1:])):
+    #                     if colloc.hit2(w1, w2):
+    #                         # из всех вариантов в variants делаем еще по 1 варианту
+    #                         for variant in variants:
+    #                             v = colloc.produce_stressed_line(variant, aligner)
+    #                             add_variants.append(v)
+    #
+    #             if add_variants:
+    #                 variants.extend(add_variants)
+    #
+    #     # 04-08-2022 добавляем варианты для триграмм типа "бок О бок"
+    #     if any((w in aligner.collocation3_first) for w in lwords) and any((w in aligner.collocation3_second) for w in lwords) and any((w in aligner.collocation3_third) for w in lwords):
+    #         # В строке возможно присутствует одно из особых словосочетаний длиной 3
+    #         add_variants = []
+    #         for colloc in aligner.collocations:
+    #             if len(colloc) == 3:
+    #                 for i1, (w1, w2, w3) in enumerate(zip(lwords, lwords[1:], lwords[2:])):
+    #                     if colloc.hit3(w1, w2, w3):
+    #                         # из всех вариантов в variants делаем еще по 1 варианту
+    #                         for variant in variants:
+    #                             v = colloc.produce_stressed_line(variant, aligner)
+    #                             add_variants.append(v)
+    #
+    #         if add_variants:
+    #             variants.extend(add_variants)
+    #
+    #     return variants
 
     def get_first_stress_variants(self, aligner):
         swords = [pword.get_first_stress_variant() for pword in self.pwords]
@@ -1225,6 +1226,9 @@ class CollocationStress(object):
     def __len__(self):
         return len(self.words)
 
+    def key(self):
+        return tuple(self.words)
+
     @staticmethod
     def load_collocation(colloc_str):
         res = CollocationStress()
@@ -1245,63 +1249,63 @@ class CollocationStress(object):
 
         return res
 
-    def hit2(self, word1, word2):
-        return self.words[0] == word1 and self.words[1] == word2
+    #def hit2(self, word1, word2):
+    #    return self.words[0] == word1 and self.words[1] == word2
 
-    def hit3(self, word1, word2, word3):
-        return self.words[0] == word1 and self.words[1] == word2 and self.words[2] == word3
+    #def hit3(self, word1, word2, word3):
+    #    return self.words[0] == word1 and self.words[1] == word2 and self.words[2] == word3
 
-    def produce_stressed_line(self, src_line, aligner):
-        nw1 = len(src_line.stressed_words) - 1
-        nw2 = len(src_line.stressed_words) - 2
-        for i1, word1 in enumerate(src_line.stressed_words):
-            if word1.poetry_word.form.lower() == self.words[0]:
-                if i1 < nw1:
-                    word2 = src_line.stressed_words[i1+1]
-                    if word2.poetry_word.form.lower() == self.words[1]:
-                        new_stressed_words = list(src_line.stressed_words[:i1])
-
-                        if len(self.words) == 2:
-                            if self.stressed_word_index == 0:
-                                # первое слово становится ударным, второе - безударное
-                                new_stressed_words.append(word1.build_stressed(self.stress_pos))
-                                new_stressed_words.append(word2.build_unstressed())
-                            else:
-                                # первое слово становится безударным, второе - ударное
-                                new_stressed_words.append(word1.build_unstressed())
-                                new_stressed_words.append(word2.build_stressed(self.stress_pos))
-
-                            # остаток слов справа от второго слова
-                            new_stressed_words.extend(src_line.stressed_words[i1+2:])
-                            new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
-                            return new_variant
-                        elif len(self.words) == 3:
-                            if i1 < nw2:
-                                word3 = src_line.stressed_words[i1 + 2]
-                                if word3.poetry_word.form.lower() == self.words[2]:
-
-                                    if self.stressed_word_index == 0:
-                                        # первое слово становится ударным, второе и третье - безударные
-                                        new_stressed_words.append(word1.build_stressed(self.stress_pos))
-                                        new_stressed_words.append(word2.build_unstressed())
-                                        new_stressed_words.append(word3.build_unstressed())
-                                    elif self.stressed_word_index == 1:
-                                        # первое и третье слова становятся безударными, второе - ударное
-                                        new_stressed_words.append(word1.build_unstressed())
-                                        new_stressed_words.append(word2.build_stressed(self.stress_pos))
-                                        new_stressed_words.append(word3.build_unstressed())
-                                    else:
-                                        # первое и второе слова становятся безударными, третье - ударное
-                                        new_stressed_words.append(word1.build_unstressed())
-                                        new_stressed_words.append(word2.build_unstressed())
-                                        new_stressed_words.append(word3.build_stressed(self.stress_pos))
-
-                                    # остаток слов справа от третьего слова
-                                    new_stressed_words.extend(src_line.stressed_words[i1 + 3:])
-                                    new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
-                                    return new_variant
-
-        raise ValueError('Inconsistent call of CollocationStress::produce_stressed_line')
+    # def produce_stressed_line(self, src_line, aligner):
+    #     nw1 = len(src_line.stressed_words) - 1
+    #     nw2 = len(src_line.stressed_words) - 2
+    #     for i1, word1 in enumerate(src_line.stressed_words):
+    #         if word1.poetry_word.form.lower() == self.words[0]:
+    #             if i1 < nw1:
+    #                 word2 = src_line.stressed_words[i1+1]
+    #                 if word2.poetry_word.form.lower() == self.words[1]:
+    #                     new_stressed_words = list(src_line.stressed_words[:i1])
+    #
+    #                     if len(self.words) == 2:
+    #                         if self.stressed_word_index == 0:
+    #                             # первое слово становится ударным, второе - безударное
+    #                             new_stressed_words.append(word1.build_stressed(self.stress_pos))
+    #                             new_stressed_words.append(word2.build_unstressed())
+    #                         else:
+    #                             # первое слово становится безударным, второе - ударное
+    #                             new_stressed_words.append(word1.build_unstressed())
+    #                             new_stressed_words.append(word2.build_stressed(self.stress_pos))
+    #
+    #                         # остаток слов справа от второго слова
+    #                         new_stressed_words.extend(src_line.stressed_words[i1+2:])
+    #                         new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
+    #                         return new_variant
+    #                     elif len(self.words) == 3:
+    #                         if i1 < nw2:
+    #                             word3 = src_line.stressed_words[i1 + 2]
+    #                             if word3.poetry_word.form.lower() == self.words[2]:
+    #
+    #                                 if self.stressed_word_index == 0:
+    #                                     # первое слово становится ударным, второе и третье - безударные
+    #                                     new_stressed_words.append(word1.build_stressed(self.stress_pos))
+    #                                     new_stressed_words.append(word2.build_unstressed())
+    #                                     new_stressed_words.append(word3.build_unstressed())
+    #                                 elif self.stressed_word_index == 1:
+    #                                     # первое и третье слова становятся безударными, второе - ударное
+    #                                     new_stressed_words.append(word1.build_unstressed())
+    #                                     new_stressed_words.append(word2.build_stressed(self.stress_pos))
+    #                                     new_stressed_words.append(word3.build_unstressed())
+    #                                 else:
+    #                                     # первое и второе слова становятся безударными, третье - ударное
+    #                                     new_stressed_words.append(word1.build_unstressed())
+    #                                     new_stressed_words.append(word2.build_unstressed())
+    #                                     new_stressed_words.append(word3.build_stressed(self.stress_pos))
+    #
+    #                                 # остаток слов справа от третьего слова
+    #                                 new_stressed_words.extend(src_line.stressed_words[i1 + 3:])
+    #                                 new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
+    #                                 return new_variant
+    #
+    #     raise ValueError('Inconsistent call of CollocationStress::produce_stressed_line')
 
 
 class PoetryStressAligner(object):
@@ -1309,13 +1313,7 @@ class PoetryStressAligner(object):
         self.udpipe = udpipe
         self.accentuator = accentuator
 
-        self.collocations = []
-        self.collocation2_first = set()
-        self.collocation2_second = set()
-
-        self.collocation3_first = set()
-        self.collocation3_second = set()
-        self.collocation3_third = set()
+        self.collocations = collections.defaultdict(list)
 
         with io.open(os.path.join(data_dir, 'collocation_accents.dat'), 'r', encoding='utf-8') as rdr:
             for line in rdr:
@@ -1324,30 +1322,8 @@ class PoetryStressAligner(object):
                     continue
 
                 c = CollocationStress.load_collocation(line)
-                self.collocations.append(c)
-                if len(c.words) == 2:
-                    # обновляем хэш для быстрой проверки наличия словосочетания длиной 2
-                    self.collocation2_first.add(c.words[0])
-                    self.collocation2_second.add(c.words[1])
-                elif len(c.words) == 3:
-                    # для словосочетаний длиной 3.
-                    self.collocation3_first.add(c.words[0])
-                    self.collocation3_second.add(c.words[1])
-                    self.collocation3_third.add(c.words[2])
 
-        self.bad_signature1 = set()
-        with io.open(os.path.join(data_dir, 'bad_signature1.dat'), 'r', encoding='utf-8') as rdr:
-            for line in rdr:
-                s = line.strip()
-                if s:
-                    if s[0] == '#':
-                        continue
-                    else:
-                        pattern = s
-                        if pattern[0] == "'" and pattern[-1] == "'":
-                            pattern = pattern[1:-1]
-
-                        self.bad_signature1.add(pattern)
+                self.collocations[c.key()].append(c)
 
         self.allow_fuzzy_rhyming = True
 
@@ -2049,1431 +2025,3 @@ class PoetryStressAligner(object):
                 defects.add_defect(Defect(0.5, description='@1884'))
 
         return defects
-
-
-if __name__ == '__main__':
-    data_dir = '../../data'
-    tmp_dir = '../../tmp'
-    models_dir = '../../models'
-
-    udpipe = UdpipeParser()
-    udpipe.load(models_dir)
-    #udpipe = StanzaParser()
-
-    accents = Accents()
-    accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
-    accents.after_loading(stress_model_dir=os.path.join(tmp_dir, 'stress_model'))
-
-    aligner = PoetryStressAligner(udpipe, accents, os.path.join(data_dir, 'poetry', 'dict'))
-
-    #x = accents.get_accent('самоцветы')
-    #print(x)
-
-    # ================================================
-
-    alignment = aligner.build_from_markup("""иска́л бара́нину для пло́ва
-но что́ то сли́шком дорога́
-и ту́т случа́йно подверну́лась
-нога́""")
-    print('\n' + alignment.get_stressed_lines() + '\n')
-
-    # ===============================================
-    # ТЕСТЫ НА ОБНАРУЖЕНИЕ БЕДНОЙ РИФМОВКИ
-    # ===============================================
-    texts = ["""Во все, что ты верил, не бывши таким,
-Растоптали, сожгли, разорвали,
-Завидуя в чем-то, пожалуй, другим,
-Которым так жизнь не ломали.""",
-
-             """Вот и наста́л, тот сла́вный де́нь.
-    Ведь ты́ его́ ждала́, как чу́да.
-    Чем э́тот пе́рвый шко́льный де́нь,
-    Пове́рь, дня лу́чшего не бу́дет."""
-    ]
-
-    for text in texts:
-        poem = [z.strip() for z in text.split('\n') if z.strip()]
-        alignment = aligner.align(poem, check_rhymes=True)
-        if not aligner.detect_poor_poetry(alignment):
-            print('Poor poetry expected for text:\n{}'.format(text))
-            exit(0)
-
-    # ========================================================================================
-    # Нормальные с технической точки зрения примеры. Они должны пройти фильтр транскриптора.
-    # ========================================================================================
-    good_poetry = [
-        """Белая береза
-        Под моим окном
-        Принакрылась снегом
-        Будто серебром""",
-
-        """Я в го́д Козы́ не жа́лю ка́к Гадю́ка.""",
-    ]
-    for poem in good_poetry:
-        poem = [z.strip() for z in poem.split('\n') if z.strip()]
-        alignment = aligner.align(poem, check_rhymes=True)
-        if alignment.score < 0.20:
-            print('ERROR: score={} is too low for the good poetry sample:\n\n{}'.format(alignment.score, '\n'.join(poem)))
-
-    # Примеры с дефектами разного рода, кроме рифмовки и ритма
-    # bad_poetry = [
-    #     """Нельзя прожить без
-    #     Красоты и без любви,
-    #     А если нет взаимности,
-    #     То происходит выгорание""",
-    # ]
-    # for poem in bad_poetry:
-    #     poem = [z.strip() for z in poem.split('\n') if z.strip()]
-    #     alignment = aligner.align(poem, check_rhymes=True)
-    #     defects = aligner.analyze_defects(alignment)
-    #     if defects.penalty < 0.5:
-    #         print('ERROR: penalty={} is too low for the bad poetry sample:\n\n{}'.format(defects.penalty, '\n'.join(poem)))
-
-
-    # Примеры с фатальными техническими дефектами, которые не должны пройти фильтр транскриптора.
-    bad_poetry = [
-        """Броса́й игра́ть слова́ми,
-        Ходи́ть по то́нкому льду.
-        Моли́сь её́ уста́ми,
-        Шепчи́ латы́нь в бреду́.""",
-    ]
-
-    for poem in bad_poetry:
-        poem = [z.strip() for z in poem.split('\n') if z.strip()]
-        alignment = aligner.align(poem, check_rhymes=True)
-        if alignment.score > 0.20:
-            print('ERROR: score={} is too high for the bad poetry sample:\n\n{}'.format(alignment.score, '\n'.join(poem)))
-
-    true_markups = [
-        ("""Ты чужо́ю никогда́ мне не была́,
-        Просто, бу́сы си́ним би́сером - да пО́ полу.""", "--"),
-
-        ("""хочу́ отшлё́пать анако́нду
-        но непоня́тно по чему́
-        вот у слона́ гора́здо ши́ре
-        чем у́""", "-A-A"),
-
-        ("""что тру́дно мне́ дало́сь на сва́дьбе
-        так э́то де́лать ви́д что я́
-        не ви́жу у отца́ неве́сты
-        ружья́""", "-A-A"),
-
-        ("""я́ полго́да е́ла
-        ме́рзких овоще́й
-        зе́ркало скажи́ мне
-        я́ ли все́х тоще́й""", "-A-A"),
-
-        #("""От Го́спода нас отделя́ет вре́мя.""", ""),
-
-        #("""враги́ не то́лько обстреля́ли
-        #око́пы моего́ полка́
-        #но и на сте́ну мне́ вконта́кте
-        #понаписа́ли ме́рзких сло́в""", "----"),
-
-        ("""Но, уже́ тоску́я
-        В ро́т тебя́ кладу́ я
-        Та́к пробле́мы не́т
-        Ста́л я людое́д""", "AABB"),
-
-        #("""уста́вший прихожу́ с рабо́ты
-        #жена́ такти́чна и мила́
-        #или хенда́й опя́ть разби́ла
-        #или в суббо́ту тё́щу ждё́м""", "----"),
-
-        ("""бок о́ бок ле́чь""", ""),
-        ("""Идё́т, бычо́к, кача́ется""", ""),
-        ("""я ми́лого узна́ю по похо́дке""", ""),
-        ("""Без конца́ и без кра́ю мечта́!""", ""),
-        ("""В по́лном разга́ре страда́ дереве́нская""", ""),
-        ("""В глубо́кой тесни́не Дарья́ла""", ""),
-
-        ("""Ана́пест, ана́пест, ана́пест –
-        Вот та́к амфибра́хий звучи́т!""", "--"),
-
-        ("""В ра́бстве спасё́нное
-        Се́рдце наро́дное""", "--"),
-
-        ("""Ночева́ла ту́чка золота́я
-        На груди́ утё́са-велика́на...""", "--"),
-
-        ("""Мой дя́дя са́мых че́стных пра́вил,
-        Когда́ не в шу́тку занемо́г...""", "--"),
-
-        ("""Волчи́ца ты́! Тебя́ я презира́ю!
-        К Птибурдуко́ву ты́ ухо́дишь от меня́!""", "--"),
-
-        ("""два ме́рса джи́п четы́ре во́львы
-        совсе́м сбеси́лись с жи́ру что́ ль вы""", "AA"),
-
-        ("""Зимы́ ждала́, ждала́ приро́да…
-        Она́ пришла́ через полго́да.""", "AA"),
-
-        ("""Бу́ря мгло́ю не́бо кро́ет,
-        Ви́хри сне́жные крутя́;
-        То́, как зве́рь, она́ заво́ет,
-        То́ запла́чет, ка́к дитя́…""", "ABAB"),
-
-        ("""Выхожу́ оди́н я на доро́гу;
-        Скво́зь тума́н кремни́стый пу́ть блести́т;
-        Но́чь тиха́. Пусты́ня вне́млет Бо́гу,
-        И звезда́ с звездо́ю говори́т.""", "ABAB"),
-
-        ("""В не́бе та́ют облака́,
-        И, лучи́стая на зно́е,
-        В и́скрах ка́тится река́,
-        Сло́вно зе́ркало стально́е.""", "ABAB"),
-
-        ("""Ночева́ла ту́чка золота́я
-        На груди́ утё́са - велика́на;
-        У́тром в пу́ть она́ умча́лась ра́но,
-        По лазу́ри ве́село игра́я…""", "ABBA"),
-
-        ("""Ты погрусти́, когда́ умрё́т поэ́т,
-        Поку́да зво́н ближа́йшей из церкве́й
-        Не возвести́т, что э́тот ни́зкий све́т
-        Я променя́л на ни́зший ми́р черве́й.""", "ABAB"),
-
-        ("""Ту́чки небе́сные, ве́чные стра́нники!
-        Сте́пью лазу́рною, це́пью жемчу́жною
-        Мчи́тесь вы, бу́дто как я́ же, изгна́нники
-        С ми́лого се́вера в сто́рону ю́жную.""", "ABAB"),
-
-        ("""Есть в напе́вах твои́х сокрове́нных
-        Рокова́я о ги́бели ве́сть.
-        Есть прокля́тье заве́тов свяще́нных,
-        Поруга́ние сча́стия е́сть.""", "ABAB"),
-
-        ("""на бра́чном ло́же я́ был за́гнан в у́гол""", ""),
-        ("""мечу́ икру́ цвета́ в ассортиме́нте""", ""),
-        ("""где ти́гры во́дятся нельзя́ лови́ть воро́н""", ""),
-        ("""Избу́шка, не к тому́ ты за́дом поверну́лась!..""", ""),
-        ("""бегу́т лега́вые с утра́ уже́ борзы́е""", ""),
-        ("""Веде́м по жи́зни мы́ друг дру́га за́ нос""", ""),
-        ("""Лиши́ть молча́щих сло́ва невозмо́жно.""", ""),
-        ("""В год Петуха́ учи́тесь кукаре́кать.""", ""),
-        ("""Оле́г два дня́ прожи́л без во́дки.""", ""),
-        ("""«Газпро́м» мечты́ мои́ втридо́рога сбыва́ет…""", ""),
-        ("""Втридо́рога плачу́ я за дешё́вку.""", ""),
-        ("""Я ду́хом сто́ек… за́ три дня́ до ба́ни.""", ""),
-        ("""Коле́са с тю́нингом – а кру́тимся, как пре́жде…""", ""),
-        ("""Едва́ просну́лся – ту́т же разбуди́ли!""", ""),
-        ("""И за́мер ми́р перед свое́й кончи́ной""", ""),
-        ("""Коль по́д руку попа́лся - ты́ вино́вен!""", ""),
-        ("""фило́логу никто́ не зво́нит""", ""),
-        ("""Мой телефо́н заси́жен ва́шими «жучка́ми»!""", ""),
-        ("""домкра́т под о́ба ва́ши чу́ма""", ""),
-        ("""Быва́ет по́здно то́лько ли́шь со сме́ртью...""", ""),
-        ("""Как по́здно мы́ осознае́м оши́бки...""", ""),
-        ("""А что́ на у́жин? Вно́вь рука́ и се́рдце?""", ""),
-        ("""А ра́ньше воскресе́нья бы́ли ча́ще.""", ""),
-        ("""И вно́вь мозги́ заны́ли к непого́де.""", ""),
-        ("""Мне заказа́ть уби́йство не по сре́дствам.""", ""),
-        ("""Ты мне́ присни́лась... Да́, опя́ть кошма́ры.""", ""),
-        ("""Я жи́знь люби́л... Она́ меня́ не о́чень...""", ""),
-        ("""А с кошелько́м вы бы́ли симпати́чней!""", ""),
-        ("""Я ва́с люби́л, пока́ хвата́ло де́нег...""", ""),
-        ("""Чем сме́х с тобо́й, уж лу́чше телеви́зор.""", ""),
-        ("""Избу́шка, не к тому́ ты за́дом поверну́лась!""", ""),
-        ("""Бог мо́й, кто ны́нче хо́дит в диссиде́нтах!""", ""),
-        ("""Сего́дня вся́ я в но́вом се́конд хе́нде!""", ""),
-        ("""Он, безусло́вно, сво́лочь - но кака́я!""", ""),
-        ("""Я ва́с посла́л... А вы́ уже́ верну́лись?""", ""),
-        ("""Рад сообщи́ть вам - на́с пове́сят ря́дом.""", ""),
-        ("""Нет, ге́ниям живы́м у на́с не вы́жить...""", ""),
-        ("""Заче́м мне Ва́ше се́рдце - я́ сыта́!""", ""),
-        ("""Я по́мню то́чно, что́ я ва́с забы́ла.""", ""),
-        ("""Прости́те, я́ не по́мню, мы́ на ты́?""", ""),
-        ("""Мой а́д не для двои́х.""", ""),
-        ("""К лицу́ мне бо́льше все́х идё́т молча́нье.""", ""),
-        ("""Кляну́сь! Ваш взгля́д мне сла́ще да́же то́рта.""", ""),
-        ("""В душе́ мы все́ немно́жечко поэ́ты.""", ""),
-        ("""О кра́ткости тракта́т я го́д писа́ла""", ""),
-        ("""Вранье́ всех СМИ́ так и́скренне правди́во.""", ""),
-        ("""Поро́й есть у судьбы́ свои́ заба́вы.""", ""),
-        ("""Бред в ри́фму мно́го ху́же, че́м без ри́фмы.""", ""),
-        ("""И в бо́чке лжи́ есть то́нкий ло́мтик пра́вды.""", ""),
-        ("""Жить в скорлупе́ намно́го безопа́сней.""", ""),
-        ("""Ложь с ло́жью ло́жь свою́ не подели́ли.""", ""),
-        ("""Погребена́ в свои́х руи́нах мы́сли.""", ""),
-        ("""На у́шко я́ себе́ шепну́ла пра́вду.""", ""),
-        ("""Быть у́мной в на́шей жи́зни неприли́чно""", ""),
-        ("""Ино́й раз дураки́ быва́ют пра́вы.""", ""),
-        ("""МозгИ́ ины́м давно́ пора́ прове́трить.""", ""),
-        ("""Как де́ньги мне́ найти́: они́ не па́хнут.""", ""),
-        ("""Ты про́жил жи́знь с поэ́зией в обни́мку?""", ""),
-        ("""Я в го́д Козы́ не жа́лю ка́к Гадю́ка.""", ""),
-        ("""Втридо́рога плачу́ я за дешё́вку.""", ""),
-        ("""Жар - Пти́ца га́дит та́к же, ка́к воро́на.""", ""),
-        ("""О! Я́ поэ́т всеми́рно - неизве́стный!""", ""),
-        ("""Вы клю́нули, но сорвала́сь нажи́вка.""", ""),
-        ("""Искра́ из гла́за ста́ла вдру́г звездо́ю.""", ""),
-        ("""Молчи́те не взахлё́б, членоразде́льно!""", ""),
-        ("""Чем бо́льше де́нег, те́м доро́же сто́ит ве́тер…""", ""),
-        ("""Нет козырно́й? – тогда́ ходи́ с креди́тной…""", ""),
-        ("""Бегу́т лега́вые, с утра́ уже́ борзы́е…""", ""),
-        ("""Нет, я́ не Ба́йрон, я́ Гордо́н...""", ""),
-        ("""Поко́йся, ми́лый пра́х, до ра́достного у́тра""", ""),
-        ("""С чего́ нача́ть? Мне на́лили «штрафну́ю»…""", ""),
-        ("""Все се́меро - козлы́! - поду́мал Во́лк...""", ""),
-        ("""Как моцаре́льно - равио́льны вечера́!""", ""),
-        ("""Вот ры́ба заливна́я, угоща́йтесь.""", ""),
-        ("""Надё́жный кле́й Моме́нт: дыши́те глу́бже""", ""),
-        ("""а на стене́ всё све́чи све́чи""", ""),
-
-        ("""дети́шки, отвлеки́те па́пу,
-        а я́ ещё́ трои́х рожу́""", "--"),
-
-        ("""смея́сь над мо́рем зубоска́лы
-        в шторм зу́бы вы́били о ска́лы""", "AA"),
-
-        ("""манья́к с распа́хнутым кафта́ном
-        яви́л свой сра́м возле лифта́ нам""", "AA"),
-
-        ("""макси́ма но́ги на́ две тре́ти
-        весьма́ смешно́ торча́т из йе́ти""", "AA"),
-
-        ("""дай обойму́ тебя́ андре́йка
-        в восто́рге кри́кнул осьмино́г""", "--"),
-
-        ("""е́сли гра́ч не се́л бы
-        сло́вно на суку́""", "--"),
-
-        ("""мы бро́сили о́блака до́м снегово́й
-        вкуси́ли полё́та свобо́ду""", "--"),
-
-        ("""массажи́ст уста́ло
-        мнё́т зухре́ бока́""", "--"),
-
-        ("""обеща́ла му́жу
-        пятеры́х рожу́""", "--"),
-
-        ("""и бы́стро дви́гая кули́сой
-        стал исполня́ть поле́т шмеля́""", "--"),
-
-        ("""риску́я показа́ться гру́бым
-        бегу́ за ва́ми с ледору́бом""", "AA"),
-
-        ("""стишо́к плохо́й макси́м нет ри́фмы
-        и пи́нгвин пра́вильно пингви́н""", "--"),
-
-        ("""манья́к с распа́хнутым кафта́ном
-        яви́л свой сра́м возле лифта́ нам""", "AA"),
-
-        ("""а где́ был ты́ жена́ спроси́ла
-        когда́ бог ру́ки раздава́л""", "--"),
-
-        ("""смеша́лись ко́ни ба́бы и́збы
-        не промахну́цца б не дай бо́г""", "--"),
-
-        ("""нашли́ приё́м вы про́тив ло́му
-        прям пе́ред те́м как впа́ли в ко́му""", "AA"),
-
-        ("""что зна́чит ви́димся не ча́сто?
-        доста́точно в неде́лю ча́с то""", "AA"),
-
-        ("""друг дру́га мы́ посла́ть хоти́м на
-        и э́та на́ша стра́сть взаи́мна""", "AA"),
-
-        ("""мы отходну́ю ва́м чита́ли
-        а вы́ с одра́ заче́м то вста́ли""", "AA"),
-
-        ("""сквозь до́ждь по бе́регу доро́ги
-        бегу́ стара́юсь не смотре́ть""", "--"),
-
-        ("""е́ду на рабо́ту
-        слё́зы по щека́м""", "--"),
-
-        ("""тепе́рь им хо́чется о но́ги
-        твои́ тере́ться и мурча́ть""", "--"),
-
-        ("""сперва́ вступи́ло в поясни́цу
-        и прострели́ло всю́ корму́""", "--"),
-
-        ("""воро́ной бо́г разочаро́ван
-        он е́й и сы́р и колбасу́""", "--"),
-
-        ("""а я́ отра́щиваю ще́ки
-        жуя́ проговори́л хомя́к""", "--"),
-
-        ("""здесь сне́г метё́т не ви́дно чу́ма
-        пасти́ оле́ней не хочу́ ма""", "AA"),
-
-        ("""ты лю́бишь ле́с моря́ и ре́ки
-        а я́ портве́йн и чебуре́ки""", "AA"),
-
-        ("""в клуб анони́мных парово́зов
-        пришё́л инко́гнито толсто́й""", "--"),
-
-        ("""Мада́м, как све́жи бы́ли ро́зы,
-        пока́ на ни́х я не дыша́л!""", "--"),
-
-        ("""За ви́димым досто́инств мно́жеством
-        Скрыва́ется поро́й ничто́жество.""", "AA"),
-
-        ("""Что в и́мени тебе́ мое́м?
-        Ты зацени́ груди́ объе́м!""", "AA"),
-
-        ("""Ма́ленький ма́льчик заре́зал стару́шку –
-        Она́ забрала́ у него́ погрему́шку.""", "AA"),
-
-        ("""Не верти́те де́вки за́дом!
-        СПИ́Д не спи́т - он бро́дит ря́дом.""", "AA"),
-
-        ("""Мы́ укра́инская на́ция!
-        На́м до жо́пы радиа́ция!""", "AA"),
-
-        ("""Мы бы́ли б идеа́льной па́рой,
-        Коне́чно, е́сли бы не ты́.""", "--"),
-
-        ("""Хму́ро гре́ла но́ги у огня́
-        Пти́ца сча́стья за́втрашнего дня́.""", "AA"),
-
-        ("""не помо́жет мне́ никто́
-        я реву́ в рука́в пальто́""", "AA"),
-
-        ("""потекла́ по ро́же ту́шь
-        си́не-чё́рная к тому́ ж""", "AA"),
-
-        ("""вы не могли́ бы ва́ше ча́до
-        ко все́м хера́м забра́ть из са́да""", "AA"),
-
-        ("""во́т бы хорошо́ бы, что́бы ка́ждый де́нь
-        ни́мб держа́лся ро́вно, а не набекре́нь""", "AA"),
-
-        ("""когда́ в душе́ печа́ли ко́поть
-        в одно́ лицо́ бы то́ртик сло́пать""", "AA"),
-
-        ("""я ту́т услы́шал кра́ем у́ха
-        как кто́-то по́ уху мне да́л""", "--"),
-
-        ("""кто хорошо́ уме́ет пла́вать
-        в душе́ немно́жечко говно́""", "--"),
-
-        ("""в антра́кте напили́сь в буфе́те
-        и к унита́зам на покло́н""", "--"),
-
-        ("""три го́лубя бато́н склева́ли
-        посла́ли де́да за вторы́м""", "--"),
-
-        ("""носи́те ма́ски мо́йте ру́ки
-        ина́че штра́фы ва́с убью́т""", "--"),
-
-        ("""а вдру́г трусы́ нама́жут я́дом?
-        все на проте́сты без трусо́в!""", "--"),
-
-
-        ("""Скажи́-ка, дя́дя, ве́дь не да́ром
-        С утра́ мы па́хнем перега́ром...""", "AA"),
-
-        ("""И что́, что та́нки ва́ши бы́стры?
-        Мост разведё́н, изво́льте жда́ть.""", "--"),
-
-        ("""Не на́до Ва́м пляса́ть с медве́дем,
-        он трё́х цыга́н перепляса́л.""", "--"),
-
-        ("""Сия́л стака́н в руке́ Ива́на –
-        К Ива́ну бли́зилась нирва́на.""", "AA"),
-
-        ("""Ко́стю ку́зовом заде́ли,
-        Ко́сти в Ко́сте загуде́ли.""", "AA"),
-
-        ("""Меня́ уда́рили доско́й —
-        Лежу́ я с бо́лью и тоско́й.""", "AA"),
-
-        ("""Как хорошо́, что ды́рочку для кли́змы
-        Име́ют все́ живы́е органи́змы!""", "AA"),
-
-        ("""Ми́шка косола́пый по́ лесу идё́т,
-        Ши́шки собира́ет, пе́сенки поё́т""", "AA"),
-
-        ("""Одна́жды, в студё́ную зи́мнюю по́ру,
-        Я и́з дому вы́шел и ту́т же зашё́л.""", "--"),
-
-        ("""На све́те не́т ужа́снее напа́сти,
-        Чем идио́т, дорва́вшийся до вла́сти!""", "AA"),
-
-        ("""Зима́ пришла́ – моро́з и вью́га…
-        Люби́те ча́ще вы́ друг дру́га!""", "AA"),
-
-        ("""не кричи́ окса́на
-        не гони́ волну́
-        ме́дленно и чё́тко
-        говори́ тону́""", "-A-A"),
-
-        ("""массажи́ст уста́ло
-        мнё́т зухре́ бока́
-        те́ что отрасти́ла
-        си́дючи в вэ ка́""", "-A-A"),
-
-        ("""иска́л бара́нину для пло́ва
-        но что́ то сли́шком дорога́
-        и ту́т случа́йно подверну́лась
-        нога́""", "-A-A"),
-
-        ("""откры́в ещё́ буты́лку во́дки
-        он спе́л мохна́того шмеля́
-        не из за красоты́ лари́сы
-        а для́""", '-A-A'),
-
-        ("""пиро́г от пирога́ немно́го
-        все ж отлича́ется поро́й
-        оди́н плыве́т вон ка́к пиро́га
-        друго́й стои́т на я́коре""", "A-A-"),
-
-        ("""обеща́ла му́жу
-        пятеры́х рожу́
-        ма́лость не хвати́ло
-        му́жу куражу́""", "-A-A"),
-
-        ("""мы бро́сили о́блака до́м снегово́й
-        вкуси́ли полё́та свобо́ду
-        и па́даем вни́з превраща́ясь с тобо́й
-        в во́ду""", "ABAB"),
-
-        ("""вдруг в перепо́лненный тролле́йбус
-        воше́л с тромбо́ном челове́к
-        и бы́стро дви́гая кули́сой
-        стал исполня́ть поле́т шмеля́""", "----"),
-
-        ("""влади́мир пу́тин поздравля́ет
-        всех россия́нок и мужчи́н
-        что жду́т их до́ма задева́я
-        рога́ми за висю́лечки""", "----"),
-
-        ("""благодарю́ тебя́ созда́тель
-        за то́ что ты́ созда́л меня́
-        за то́ что ты́ созда́л вади́ма
-        простра́нство вре́мя и нтерне́т""", "----"),
-
-
-        ("""у ва́с ли не́т ли огоньку́ ли
-        ай хорошо́ благодарю́
-        хотя́ куда́ там помоги́те
-        горю́""", "-A-A"),
-
-        ("""вопро́са два́ где ж ты́ был ра́ньше
-        все э́ти до́лгие года́
-        и не пойти́ ль тебе́ обра́тно
-        туда́""", "-A-A"),
-
-        ("""е́сли гра́ч не се́л бы
-        сло́вно на суку́
-        я́ б и не заме́тил
-        что́ ещё́ могу́""", "----"),
-
-        ("""мир разгова́ривает с на́ми
-        а мы́ по пре́жнему немы́
-        и до сих по́р не зна́ем са́ми
-        кто мы́""", 'ABAB'),
-
-        ("""Откупо́рил, налива́ю
-        Бу́льки ду́шу ворожа́т
-        Предвкуша́я, пря́мо та́ю
-        Ка́к ребё́нок ма́ме, ра́д""", "ABAB"),
-
-        ("""И́х куку́шка на крюку́
-        Ме́рит вре́мя старику́
-        По часо́чку, по деньку́
-        Ме́лет го́дики в муку́""", "AAAA"),
-
-        ("""Чем се́кс с тобо́й, уж лу́чше телеви́зор
-        Иль на худо́й коне́ц нажра́ться антифри́за.""", "AA"),
-
-        ("""два́ лингви́ста спо́ря тво́рог и́ль творо́г
-        мо́рдами друг дру́га би́ли об поро́г""", "AA"),
-
-        ("""кто́ не лю́бит ка́ши ма́нной —
-        то́т како́й-то о́чень стра́нный!""", "AA"),
-
-        ("""а моя́ любо́вь на
-        со́том этаже́
-        я́ заколеба́юсь
-        поднима́ться же́""", "-A-A"),
-
-        ("""Хо́ть бы ра́з
-        Поли́л наро́чно
-        С не́ба в блю́дце
-        До́ждь моло́чный!""", "-A-A"),
-
-        ("""До́ждь идё́т,
-        Пото́ки лью́тся,
-        Че́рный ко́т
-        Гляди́т на блю́дце.""", "ABAB"),
-
-        ("""А где хра́мы и попы́
-        Там к нау́ке все́ слепы́
-        Окропя́т, махну́т кади́лом
-        Так заго́нят все́х в моги́лу""", "AABB"),
-
-        ("""Но дурака́м везё́т, и э́то то́чно
-        Хотя́ никто́ не зна́ет наперё́д
-        А получи́лось всё́ насто́лько про́чно
-        Что никака́я си́ла не порвё́т""", "ABAB"),
-
-        ("""Э́то де́йствие просто́е
-        Наблюда́ем ка́ждый го́д
-        Да́же ста́рым не́т поко́я
-        Чё́рте что́ на у́м идё́т""", "ABAB"),
-
-        ("""С той поры́, когда́ черну́ха
-        На душе́, с овчи́нку све́т
-        Только вспо́мню ту́ стару́ху
-        Так хандры́ в поми́не не́т""", "ABAB"),
-
-        ("""И ми́р предста́л как в стра́шной ска́зке
-        Пусты́ доро́ги про́бок не́т
-        Все у́лицы наде́ли ма́ски
-        Тако́й вот бра́т кордебале́т""", "ABAB"),
-
-        ("""Руко́ю ле́вой бо́льше шевели́те
-        Чтоб ду́мали, что Вы́ ещё́ всё жи́вы
-        А э́ти во́семь та́ктов - не дыши́те
-        Умри́те! Не игра́йте та́к фальши́во""", "ABAB"),
-
-        ("""Сказа́л серьё́зно та́к, коле́но преклони́в
-        Что о́н влюбле́н давно́, души́ во мне́ не ча́ет
-        Он в изоля́ции, как у́зник за́мка И́ф
-        Нас бы́стро в це́ркви виртуа́льной повенча́ют""", "ABAB"),
-
-        ("""я заражу́сь любо́вью к спо́рту
-        и бу́ду бе́гать и скака́ть
-        чтоб все́ окре́стные мужчи́ны
-        при мне́ втяну́ли животы́""", '----'),
-
-        ("""Зате́м каре́та бу́дет с тро́йкой лошаде́й
-Банке́т, шампа́нское, солье́мся в та́нце ба́льном
-Пото́м отпу́стим в небеса́ мы голубе́й
-И бу́дем вме́сте, навсегда́! Но... виртуа́льно""", "ABAB"),
-
-        ("""Здра́вствуй До́ня белогри́вый
-        Получи́лось ка́к-то ло́вко
-        Е́сли че́стно, некраси́во
-        Объего́рил сно́ва Во́вку""", "ABAB"),
-
-        ("""Ты́ для на́с почти́ что сво́й
-        Бы́ло де́ло кры́ли ма́том
-        Сче́т на вре́мя и́м закро́й
-        Что́бы ду́мали ребя́та""", "ABAB"),
-
-        ("""И труба́ прое́кту с га́зом
-        У тебя́ все намази́
-        Возверне́м реа́льность сра́зу
-        Ты им ви́рус привези́""", "ABAB"),
-
-        ("""Даны́ кани́кулы – во бла́го
-        И, что́бы вре́мя не теря́ть
-        Мы на Парна́с упря́мым ша́гом
-        Стихи́ отпра́вимся писа́ть""", "ABAB"),
-
-        ("""Стал о́н расспра́шивать сосе́да
-        Ведь на рыба́лку, хо́ть с обе́да
-        Ухо́дит то́т, иль у́тром ра́но
-        И не вопи́т супру́га рья́но""", "AABB"),
-
-        ("""Но де́ло в то́м, что спе́реди у Да́мы
-        Для гла́з мужски́х есть ва́жные места́
-        И что́б поздне́е не случи́лось дра́мы
-        Вы покажи́те зу́бки и уста́""", "ABAB"),
-
-        ("""Я мы́ло де́тское себе́ купи́ла
-Лицо́ и ру́ки тща́тельно им мы́ла
-Вы не пове́рите, мои́ друзья́
-В ребе́нка преврати́лась я́""", "AABB"),
-
-        ("""То́ в поры́ве настрое́нья
-        Пля́шет в ди́ком упое́нье
-        То́, и во́все вдру́г курьё́зы
-        На стекле́ рису́ет слё́зы""", "AABB"),
-
-        ("""А второ́й сосе́д - банди́т
-        О́н на на́с и не гляди́т
-        Ве́чно хо́дит под охра́ной
-        Му́тный би́знес шуруди́т""", "AABA"),
-
-        ("""Где́ застря́л жени́х мой
-        Где? Жду́ его́ в трево́ге
-        Не подо́х ли бе́лый ко́нь
-        Где́-нибудь в доро́ге""", "-A-A"),
-
-        ("""Прошу́ Вас, не дари́те мне́ цветы́
-        И не в почё́те ны́нче самоцве́ты
-        Ки́ньте в меня́ кусо́чком колбасы́
-        Идё́т четвё́ртый ча́с мое́й дие́ты""", "-A-A"),
-
-        ("""Быть гли́ною – блаже́ннейший уде́л
-        Но всё́ ж в рука́х Творца́, покры́тых сла́вой
-        Нам не пости́чь Его́ вели́ких де́л
-        Оди́н Госпо́дь твори́ть име́ет пра́во""", "ABAB"),
-
-        ("""Тума́ня ра́зум за́пахом ело́вым
-        Из нового́дних ска́зочных чуде́с
-        Друзе́й и ма́му мне́ напо́мнил ле́с
-        Не утеша́я, но верну́в к осно́вам""", "ABBA"),
-
-        ("""Увы́, нельзя́ от ни́х спасти́сь
-        крепка́ петля́ гипно́за
-        пока́ моги́лой смо́трит ввы́сь
-        твоя́ метаморфо́за""", "ABAB"),
-
-        ("""Любо́й рождё́н для по́иска и ри́ска
-        Любо́му сча́стье хо́чется найти́
-        Ины́м суха́рик вме́сто ка́ши в ми́ске
-        Други́м полё́т по Мле́чному Пути́""", "ABAB"),
-
-        ("""Беспе́чен ле́с, не слы́ша топора́
-        Дове́рчив, ка́к младе́нец в колыбе́ли
-        То укача́в, то гла́дя е́ле - е́ле
-        Игра́ют с ни́м весё́лые ветра́""", "ABBA"),
-
-        ("""Быть гли́ною – блаже́ннейший уде́л
-Но всё́ ж в рука́х Творца́, покры́тых сла́вой
-Нам не пости́чь Его́ вели́ких де́л
-Оди́н Госпо́дь твори́ть име́ет пра́во""", "ABAB"),
-
-        ("""Уже́ побыва́ть не вперво́й
-На звё́здах разли́чного я́руса
-Прия́тно с подзо́рной трубо́й
-Стоя́ть под натя́нутым па́русом""", "ABAB"),
-
-        ("""Но что́ же како́е-то чу́вство щемя́щее
-        как - бу́дто сего́дня после́дняя встре́ча у на́с
-        секу́нды, мину́ты, как пти́цы паря́щие
-        то ко́смоса шё́пот, то ве́тра внеза́пного ба́с""", "ABAB"),
-
-        ("""Бо́ль из про́шлых дне́й остра́
-        Ла́вры вно́вь несё́т на блю́де
-        От утра́ и до утра́
-        Ды́шит та́кже, ка́к и лю́ди""", "ABAB"),
-
-        ("""нам ну́жно укрепи́ть боге́му
-        сказа́л дикта́тор и тотча́с
-        отбо́рных три́дцать офице́ров
-        наде́в шарфы́ ушли́ в запо́й""", "----"),
-
-        ("""пролета́ет ле́то
-        гру́сти не тая́
-        и аналоги́чно
-        пролета́ю я́""", "-A-A"),
-
-        ("""хардко́р на у́лице сосе́дней
-вчера́ ната́ша умерла́
-и никола́ю наконе́ц то
-дала́""", "-A-A"),
-
-        ("""он удира́л от на́с двора́ми
-        едва́ успе́в сказа́ть свекла́
-        филфа́к не ви́дывал тако́го
-        ссыкла́""", "-A-A"),
-
-        ("""я проводни́к электрото́ка
-        зажгу́ две ла́мпочки в носу́
-        как то́лько но́жницы в розе́тку
-        засу́""", "-A-A"),
-
-        ("""узна́й вы из како́го со́ра
-        поро́ю пи́шутся стихи́
-        свои́ б засу́нули пода́льше
-        имхи́""", "-A-A"),
-
-        ("""аэроста́ты цеппели́ны
-        и гво́здь програ́ммы ле́ бурже́
-        после́дний вы́дох господи́на
-        пэжэ́""", "ABAB"),
-
-        ("""всех те́х кого́ хоте́л уво́лить
-        от зло́сти проломи́в насти́л
-        прора́б в полё́те трёхмину́тном
-        прости́л""", "-A-A"),
-
-        ("""оле́г за жи́знью наблюда́ет
-        и ду́мает ещё́ б разо́к
-        пересмотре́ть её́ снача́ла
-        в глазо́к""", "-A-A"),
-
-        ("""ко мне́ во сне́ яви́лась ю́ность
-        про жи́знь спроси́ла про семью́
-        и до́лго пла́кала в поду́шку
-        мою́""", "-A-A"),
-
-        ("""меж на́ми пробежа́ла и́скра
-        а у тебя́ в рука́х кани́стра""", 'AA'),
-
-        ("""риску́я показа́ться гру́бым
-        бегу́ за ва́ми с ледору́бом""", "AA"),
-
-        ("""был в се́ксе о́чень виртуо́зен
-        но ли́шь в миссионе́рской по́зе""", "AA"),
-
-        ("""из но́рки вы́сунув еба́льце
-        мне бурунду́к отгры́з два па́льца""", "AA"),
-
-        ("""от ушеспание́льной си́ськи
-        глеб вы́жрал во́дку ро́м и ви́ски""", "AA"),
-
-        ("""фура́жка с ге́рбом ство́л и кси́ва
-        лицо́ печа́льно но краси́во""", "AA"),
-
-        ("""про меня́ вы лжё́те
-        вся́ческую гну́сь
-        я́ ж ведь не распла́чусь
-        я́ ж ведь расплачу́сь""", "-A-A"),
-
-        ("""на сва́дьбе бы́вшего супру́га
-        на би́с спляса́ла гопака́
-        криви́лась но́вая вот су́ка
-        кака́""", "-A-A"),
-
-        ("""слеза́ прокля́той комсомо́лки
-        прожгла́ исто́рию наскво́зь
-        и ходорко́вскому на те́мя
-        свинцо́вой ка́плей селяви́""", "----"),
-
-        ("""скрипя́ зуба́ми шестерё́нки
-        живу́т бок о́ бок без любви́""", "--"),
-
-        ("""я мо́лча загора́л на ка́мне
-        а вы́ по па́льцам с молотка́ мне""", "AA"),
-
-        ("""барме́н нале́йте ка мохи́то
-        а то́ не тя́нет на грехи́ то""", "AA"),
-
-        ("""голки́пер че́шский не меша́й бы
-        забро́сили б ещё́ две ша́йбы""", "AA"),
-
-        ("""мир электри́чества бичу́я
-        иду́ держа́ в руке́ свечу́ я""", "AA"),
-
-        ("""с тобо́ю жи́ли мы́ бок о́ бок
-        веще́й нажи́ли пя́ть коро́бок""", "AA"),
-
-        ("""не смо́г маг сня́ть вене́ц безбра́чья
-        ведь развожу́ кото́в и сра́ч я""", "AA"),
-
-        ("""а то́чно у тебя́ три я́хты
-        живе́шь в хруще́вке в ебеня́х ты""", "AA"),
-
-        ("""в али́ экспре́сс и на ави́то
-        иска́л любо́вь но не́т любви́ то""", "AA"),
-
-        ("""хоте́л в камо́рку я́ зайти́ но
-        чу та́м струга́ют бурати́но""", "AA"),
-
-        ("""баб мно́го чи́стых и наи́вных
-        а мы́ скоты́ суе́м хуи́ в них""", "AA"),
-
-        ("""Расскажу́ про молодё́жь
-        Не хоте́лось бы, но всё́ ж
-        Гра́мот о́трок не чита́ет
-        А уда́рился в балдё́ж""", "AABA"),
-
-        ("""я нё́с петро́ву на лине́йке
-        и у меня́ смеще́нье гры́ж
-        а ве́дь петро́вой говори́ли
-        не жри́ ж""", '-A-A'),
-
-        ("""я́ с тоско́й гляжу́ на
-        де́вушек вдали́
-        на лицо́ мне ю́ность
-        ко́льщик наколи́""", "-A-A"),
-
-        ("""я распахну́л души́ бушла́ты
-        но всё́ равно́ с други́м ушла́ ты""", "AA"),
-
-        ("""к восьмо́му ма́рта одни́ тра́ты
-        наде́юсь что́ уйдё́шь сама́ ты""", "AA"),
-
-        ("""не сто́ль криво́й была́ судьба́ бы
-        когда́ бы по́нял я́ суть ба́бы""", "AA"),
-
-        ("""глеб у жены́ проси́л поща́ды
-        ну сле́зь с меня́ свари́ борща́ ты""", "AA"),
-
-        ("""чита́ет ста́рая ари́на
-        для арапчо́нка на фарси́
-        перевели́сь богатыри́ на
-        руси́""", "ABAB"),
-
-        #("""ни желтизна́ зубо́в ни ба́с и
-        #ни даже чё́рные усы́
-        #зухру́ весно́й смуща́ли то́лько
-        #весы́""", "-A-A"),
-
-        ("""Скала́. Хребе́т. Гора́. Или утё́с
-        Не вертика́ль. Но всё́ же о́чень кру́то
-        Како́й… поры́в её́ туда́ занё́с
-        Одну́. И без страхо́вки почему́-то""", "ABAB"),
-
-        ("""взял вме́сто во́дки молока́ я
-        присни́тся же хуйня́ така́я""", "AA"),
-
-        ("""два па́рных отыска́л носка́ я
-        встреча́й краса́вчика тверска́я""", "AA"),
-
-        ("""снять се́лфи с ка́мнем на мосту́ ли
-        иль сто́я под крюко́м на сту́ле""", "AA"),
-
-        ("""не оттого́ ль мне одино́ко
-        что лу́к ем то́лько и чесно́к а""", "AA"),
-
-        ("""оле́г не дре́ль но почему́ то
-        всё вре́мя све́рлит мо́зг кому́ то""", "AA"),
-
-        ("""взял динами́т поджё́г фити́ль но
-        так неуме́ло инфанти́льно""", "AA"),
-
-        ("""лежа́т на кла́дбище не те́ ли
-        чей ду́х был здра́в в здоро́вом те́ле""", "AA"),
-
-        ("""лети́т аню́та с парашю́том
-        а не́т без парашю́та тьфу́ ты""", "AA"),
-
-        ("""мы собира́лись плы́ть к вега́нам
-        но ку́к сказа́л а нафига́ нам""", "AA"),
-
-        ("""я ебану́л тебя́ весло́м бы
-        но зна́ю дороги́е пло́мбы""", "AA"),
-
-        ("""от вымира́нья ми́р спаса́я
-        творю́ в посте́ли чудеса́ я""", "AA"),
-
-        ("""передаё́м приве́т ано́нам
-        а впро́чем на́до ли оно́ нам""", "AA"),
-
-        ("""люблю́ ее́ и жму́сь побли́же
-        да и прохла́дно не бали́ же""", "AA"),
-
-        ("""не в жё́ны взя́л а для заба́вы
-        на передо́к окса́н слаба́ вы""", "AA"),
-
-        ("""бетхо́вен от насто́йки клю́квы
-        и ба́ха спро́сит а не глю́к вы""", "AA"),
-
-        ("""о всемогу́щий си́лы да́й нам
-        в борьбе́ с засте́ночным раммшта́йном""", "AA"),
-
-        ("""топоро́м не на́до
-        ба́ловать в лесу́
-        заруби́л себе́ я
-        э́то на носу́""", "-A-A"),
-
-        ("""о граждани́н спирт пью́щий кто́ ты
-        исто́чник ра́дости ль иль рво́ты""", "AA"),
-
-        ("""и заче́м вчера́ я
-        вле́зла в э́тот спо́р
-        на́до перепря́тать
-        тру́пы и топо́р""", "-A-A"),
-
-        ("""дрель изоле́нту пассати́жи
-        отло́жь маш с му́жем накати́ же""", "AA"),
-
-        ("""хоте́л взять льго́тные креди́ты
-        сказа́ли на́хуй мо́л иди́ ты""", "AA"),
-
-        ("""жизнь пролети́т мы все́ умре́м на
-        и кто́ кути́л и кто́ жил скро́мно""", "AA"),
-
-        ("""не понима́ю нихера́ я
-        заче́м бох за́пер две́ри ра́я""", "AA"),
-
-        ("""а на пове́стке дня́ две те́мы
-        бюдже́т и почему́ в пизде́ мы""", "AA"),
-
-        ("""вам спря́тать удало́сь в трико́ то
-        часть ту́ши ни́же антреко́та""", "AA"),
-
-        ("""чтец что́ то мя́млил на́м фальце́том
-        так и не по́нял что́ в конце́ там""", "AA"),
-
-        ("""глеб пиздану́лся с эвере́ста
-        у на́с вопро́с заче́м поле́з то""", "AA"),
-
-        ("""Я сра́зу осозна́л, что встре́тились не зря́ мы
-        И вско́ре сбы́лось всё́, о чё́м мечта́л
-        Дово́льно ско́ро я́ к жилью́ прекра́сной да́мы
-        Доро́жку вечера́ми протопта́л""", "ABAB"),
-
-        ("""не бу́дь у ба́нь и у кофе́ен
-        пиаротде́лов и прессслу́жб
-        мы все́ б завши́вели и пи́ли
-        из лу́ж б""", "-A-A"),
-
-        ("""по суперма́ркету с теле́жкой
-        броди́ла же́нщина сукку́б
-        и донима́ла консульта́нтов
-        муку́ б""", "-A-A"),
-
-        ("""необосно́ванная ве́ра
-        в своё́ владе́ние дзюдо́
-        не та́к вредна́ в проце́ссе дра́ки
-        как до́""", "-A-A"),
-
-        ("""когда́ бухга́лтерша напьё́тся
-        всегда́ танцу́ет на́м стрипти́з
-        и не в трусы́ к ней де́ньги ле́зут
-        а и́з""", '-A-A'),
-
-        ("""моя́ програ́мма ва́м помо́жет
-повы́сить у́ровень в дзюдо́
-вот фо́то по́сле поеди́нка
-вот до́""", "-A-A"),
-
-        ("""капу́сты посади́ла по́ле
-        и а́исту свила́ гнездо́
-        но интуи́ция мне ше́пчет
-        не то́""", "----"),
-
-        ("""гля́нул я́ на лю́сю
-        и отве́л глаза́
-        мы́слей нехоро́ших
-        па́костных из за́""", "-A-A"),
-
-        ("""хочу́ отшлё́пать анако́нду
-        но непоня́тно по чему́
-        вот у слона́ гора́здо ши́ре
-        чем у́""", "-A-A"),
-
-        ("""когда́ уви́дела принце́сса
-моё́ фами́льное гнездо́
-то по́няла несоверше́нство
-гнёзд до́""", "-A-A"),
-
-        ("""вот от люде́й мол на́ два ме́тра
-        а мне́ поня́тно не вполне́
-        счита́ть за челове́ка му́жа
-        иль не́""", "-A-A"),
-
-        ("""кро́тику из бу́син
-        сде́лаю глаза́
-        загляни́ дружо́чек
-        горизо́нты за́""", "-A-A"),
-
-        ("""никто́ не хо́чет с никола́ем
-        повспомина́ть корпорати́в
-        все предлага́ют почему́ то
-        идти́ в""", "-A-A"),
-
-        ("""оле́г реа́льностью уби́тый
-        всё и́щет и́стину в вине́
-        попереме́нно то́ нахо́дит
-        то не́""", '-A-A'),
-
-        ("""вот ра́ньше про́сто отрека́лись
-        тепе́рь отла́йкиваются
-        но в де́йстве э́том пра́вда жи́зни
-        не вся́""", "----"),
-
-        ("""ты сли́шком мно́го е́шь клетча́тки
-        хлеб с отрубя́ми на обе́д
-        не ви́жу ша́хматы и кста́ти
-        где пле́д""", "-A-A"),
-
-        ("""в трущо́бах во́лки приуны́ли
-        воро́ны на ветвя́х скорбя́т
-        верну́ли но́ль ноль три́ проми́лли
-        наза́д""", "ABAB"),
-
-        ("""ты не пришё́л сказа́л что про́бки
-        сказа́л ветра́ сказа́л снега́
-        а я́ прекра́сно понима́ю
-        пурга́""", "-A-A"),
-
-        ("""на вконта́кт отвлё́кся
-        и блину́ хана́
-        сжё́г на сковоро́дке
-        чу́чело блина́""", "-A-A"),
-
-        ("""я вы́рос в ми́ре где́ драко́ны
-        съеда́ли на́ших дочере́й
-        а мы́ расти́ли помидо́ры
-        и ке́тчуп де́лали для ни́х""", "----"),
-
-        ("""оле́г пове́сил объявле́нье
-        мне о́чень ну́жен психиа́тр
-        и телефо́н не умолка́ет
-        отбо́ю не́т от докторо́в""", "----"),
-
-        ("""нет вы́ непра́вильно ебё́тесь
-        еба́ться на́до ху́ем вве́рх
-        сказа́л матро́скин почтальо́ну
-        и отобра́л велосипе́д""", "----"),
-
-        ("""шаи́нский дже́ксону игра́ет
-        шопе́на похоро́нный ма́рш
-        как гениа́льным музыка́нтам
-        легко́ и про́сто умира́ть""", '----'),
-
-        ("""стоя́ли лю́ди в магази́ны
-        но де́ньги ко́нчились у ни́х
-        они́ ушли́ а в магази́нах
-        жратва́ всё не конча́ется""", "A-A-"),
-
-        ("""оле́га би́ли все́м орке́стром
-        и научи́лись извлека́ть
-        отли́чный во́пыль в до мажо́ре
-        путё́м уда́ров и щипко́в""", "----"),
-
-        ("""оле́га су́нули в скафа́ндер
-        и запусти́ли на луну́
-        так на́ши де́тские жела́нья
-        внеза́пно настига́ют на́с""", "----"),
-
-        ("""моя́ пози́ция по кры́му
-        чуть измени́лась со вчера́
-        а о́льга э́того не зна́ет
-        и мо́лча в ку́хне ре́жет хле́б""", "----"),
-
-        ("""давно́ в лесу́ не слы́шно дя́тла
-        ах неуже́ли пти́чий гри́пп
-        и э́той му́дрой де́рзкой пти́це
-        так по́дло оборва́л поле́т""", "----"),
-
-        ("""портно́вским ме́тром укоко́шен
-        в перми́ замо́рский моделье́р
-        а не́фиг со свои́м дюймо́вым
-        к портны́м в чужо́е ателье́""", "-A-A"),
-
-        ("""пойде́м оле́жка погуля́ем
-        окса́на ще́лкнула замко́м
-        и во́т оле́г несе́тся к две́ри
-        скули́т захо́дится слюно́й""", "----"),
-
-        ("""я рисова́л твои́ изги́бы
-        и все́ окру́глости мелко́м
-        а ты́ лежа́ла на асфа́льте
-        ничко́м""", "-A-A"),
-
-        ("""стихи́ ко мне́ прихо́дят но́чью
-        когда́ по го́роду в такси́
-        я е́ду и везу́ пода́рок
-        тебе́ в коро́бке черепно́й""", "----"),
-
-        ("""к зо́е не́т прете́нзий
-        то́лько ли́шь одна́
-        почему́ у зо́и
-        ко́нчилась спина́""", "-A-A"),
-
-        ("""ты́ уже́ не мо́лод
-        я́ не молода́
-        шко́ла забира́ет
-        лу́чшие года́""", "-A-A"),
-
-        ("""в цыга́нском та́боре гуля́нье
-        и все́ насто́лько во хмелю́
-        что да́же пе́сню посвяти́ли
-        шмелю́""", "-A-A"),
-
-        ("""для жы́зни я́ бы съе́ла ло́шадь
-        обло́жку па́спорта и фла́г
-        все что́ пищи́т и кровото́чит
-        но дру́га дру́га никогда́""", "----"),
-
-        ("""тё́щенька родна́я
-        те́м и дорога́
-        что́ иска́ть не на́до
-        о́бразы врага́""", "-A-A"),
-
-        ("""побы́в в объя́тиях кура́нтов
-        и стре́лок мускули́стых и́х
-        тепе́рь с вопро́сом ско́лько вре́мя
-        я обраща́юсь ли́шь к луне́""", "----"),
-
-        ("""да ты́ бере́менна родна́я
-        уста́лость тошнота́ круги́
-        нет всё́ гора́здо ху́же ди́ма
-        меня́ воро́тит от тебя́""", "----"),
-
-        ("""мы твё́рдо зна́ли направле́нье
-        но с хо́ду въе́хали в тума́н
-        и всё́ исче́зло ли́шь колё́са
-        едва́ каса́ются земли́""", "----"),
-
-        ("""непро́сто вы́жить в на́ше вре́мя
-        не про́сто вы́жить а прожи́ть
-        так что́бы то́т кто про́сто вы́жил
-        сказа́л ну ни хера́ себе́""", "----"),
-
-        ("""к иллюмина́тору прильну́ла
-        ну где́ же где́ же ты́ земля́
-        како́й то ма́рс сату́рн и ко́льца
-        лета́ю та́к девя́тый го́д""", "----"),
-
-        ("""любо́вь похо́жая на пра́здник
-        что к на́м несла́сь на все́х пара́х
-        о бу́дни се́рые с разбе́гу
-        шара́х""", "-A-A"),
-
-        ("""в откры́тый у́тром холоди́льник
-        окса́на смо́трит це́лый де́нь
-        на у́лице всё сне́г да хо́лод
-        а та́м и со́лнце и капе́ль""", "----"),
-
-        ("""когда́ чапа́ев потеря́лся
-        в прозра́чных во́дах иссыкку́ль
-        его́ нашё́л по гугельма́псу
-        эркю́ль""", "-A-A"),
-
-        ("""из ду́ба извлекли́ запи́ску
-        в ней здра́вствуй ма́ша ка́к дела́
-        а ка́к дела́ когда́ ты ду́ба
-        дала́""", "-A-A"),
-
-        ("""к восьмо́му ма́рта поздравле́нья
-        чини́т рука́ми мо́й куми́р
-        он вдво́е бо́льше бы поздра́вил
-        да бо́льно па́льцы ко́ротки""", "----"),
-
-        ("""кружо́к марти́стов апрели́стов
-        стал та́йно посеща́ть февра́ль
-        а до́ма говори́т что хо́дит
-        на ку́рсы кро́йки изо льда́""", "----"),
-
-        ("""смотри́ поля́рные медве́ди
-        трут спи́нами земну́ю о́сь
-        и спи́ны и́х передаю́тся
-        всем электро́нам на земле́""", "----"),
-
-        ("""вот ту́т мы кла́дбище постро́им
-        сказа́л прису́тствующим мэ́р
-        и в гру́нт торже́ственно кува́лдой
-        вбил пе́рвый золочё́ный тру́п""", "----"),
-
-        ("""гребе́ц грёб противоречи́во
-        а я́ сиде́л на берегу́
-        и бе́рег не́с меня́ куда́то
-        со сре́дней ско́ростью реки́""", "----"),
-
-        ("""без жи́зни сме́рти не быва́ет
-        без сме́рти жи́знь уже́ не жи́знь
-        все с филосо́фией зако́нчил
-        тепе́рь съесть ка́шу и в крова́ть""", "----"),
-
-        ("""глеб убеди́тельный ора́тор
-        вверну́ть мог кре́пкое словцо́
-        жестикули́руя нога́ми
-        в лицо́""", "-A-A"),
-
-        ("""вчера́ столкну́лся с гру́ппой зо́мби
-        они́ шли в по́исках мозго́в
-        прошли́ и да́же не взгляну́ли
-        я ка́к оплё́ванный стою́""", "----"),
-
-        ("""я пред вели́чием споко́йным
-        блиста́ющих могу́чих а́льп
-        гото́в снять шля́пу да́же бо́льше
-        снять ска́льп""", "-A-A"),
-
-        ("""два ме́сяца я е́м лосо́ся
-        шесть ме́сяцев я е́м лося́
-        четы́ре ме́сяца сплю ла́пу
-        сося́""", "-A-A"),
-
-        ("""от пья́нства у́мер анато́лий
-        сконча́лся от обжо́рства гле́б
-        а пё́тр в тюрьме́ живо́й пьёт во́ду
-        ест хле́б""", "-A-A"),
-
-        ("""она́ ушла́ в суббо́ту у́тром
-        забра́в с собо́ю ли́шь кота́
-        а о́н пото́м еще́ два го́да
-        лил во́ду в блю́дце на полу́""", "----"),
-
-        ("""я́ б сейча́с уе́хал
-        к мо́рю на юга́
-        но приме́рзла к пе́чке
-        ле́вая нога́""", "-A-A"),
-
-        ("""когда́ я осозна́л како́го
-        посла́л по ма́тери качка́
-        непроизво́льно сжа́лся сфи́нктер
-        зрачка́""", "-A-A"),
-
-        #("""мы вме́сте с тобо́й занима́лись цигу́н
-        #и вме́сте ходи́ли на йо́гу
-        #но ты́ вдруг сказа́ла мне вместо сёгу́н
-        #сё́гун""", "ABAB"),
-
-        ("""оле́гу суперру́ку да́ли
-        за две́ обы́чные руки́
-        оле́г идё́т и спра́ва лю́ди
-        с восто́ргом смо́трят на него́""", "----"),
-
-        ("""сидя́т в подъе́здах нимфома́ны
-        глаза́ безду́мны и пусты́
-        в шприце́ у ка́ждого по ни́мфе
-        и ве́ны взду́лись на рука́х""", "----"),
-
-        ("""поля́ки шли́ за лжеоле́гом
-        чтобы забра́ть себе́ москву́
-        но настоя́щих два́ оле́га
-        тотча́с поря́док навели́""", "A-A-"),
-
-        ("""ты́ была́ б мне та́ня
-        о́чень дорога́ 
-        е́сли б не пришло́сь мне
-        спи́ливать рога́""", "-A-A"),
-
-        ("""как хорошо́ что е́сть тру ба́бы
-        ещё́ немно́го и труба́ бы""", "AA"),
-
-        ("""Я сра́зу осозна́л, что встре́тились не зря́ мы
-        И вско́ре сбы́лось всё́, о чё́м мечта́л
-        Дово́льно ско́ро я́ к жилью́ прекра́сной да́мы
-        Доро́жку вечера́ми протопта́л""", "ABAB"),
-
-        ("""но́ль килокоро́вий
-        на́дпись на торте́
-        хо́ть и страшнова́то
-        о́н уже́ во рте́""", "-A-A"),
-
-        ("""не подберу́ ника́к слова́ я
-        от ва́ших сло́в охуева́я""", "AA"),
-
-        ("""вот до́ктор ре́жет пацие́нта
-        и не́рвно ко́мкая кишки́
-        не то́ не то́ бормо́чет по́д нос
-        и и́щет ри́фму под абсце́сс""", "----"),
-
-        ("""люблю́ натру́женные ру́ки
-        и ко́сы ру́сые твои́
-        а е́сли вду́маться не бо́льно
-        то и́""", "-A-A"),
-
-        ("""гляди́ мне про́дали карти́ну
-        како́й весё́ленький пейза́ж
-        а где́ пове́сишь пе́ред се́йфом
-        не за́ ж""", "-A-A"),
-
-        ("""уколи́ сестра́ мне
-        в гла́з чего́ нибу́дь
-        за бревно́м не ви́жу
-        к коммуни́зму пу́ть""", "-A-A"),
-
-        ("""не до чя́ со щя́ми
-        не до жы́ и шы́
-        е́сли в сре́дней шко́ле
-        па́шеш за грошы́""", "-A-A"),
-
-        ("""Судьбо́ю - ра́зные пути́ -
-        Ты не спеши́л, я отстава́ла -
-        Опя́ть с нуля́, опя́ть снача́ла.
-        Каза́лось, с ме́ста не сойти́.""", "ABBA"),
-
-        ("""За все́ слова́, за ве́сь тот вздо́р,
-        Что я́ несла́, сама́ не зна́я,
-        Идя́ судьбе́ напереко́р,
-        Любо́вь и не́жность отпуска́я!""", "ABAB"),
-
-        ("""Тата́рин - ма́льчик - пу́шкинский Ратми́р:
-        Как смо́ль, волна́ кудре́й, длинны́ ресни́цы,
-        Масли́ны гла́з до синевы́ черны́ -
-        Краса́вец молодо́й и смуглоли́цый.""", "-A-A"),
-
-        ("""Лови́ла ры́бок золоты́х,
-        Твои́х глуби́н не достига́я...
-        Был то́лько ша́г - из тьмы́ до ра́я.
-        Крича́л... Не слы́шала призы́в.""", "-AA-"),
-
-        ("""Я по́мню все́ моро́з и сту́жу
-        Снежи́нок не́жный хорово́д.
-        Я по́мню, ка́к заме́рзли лу́жи,
-        Все дру́жно жда́ли Но́вый го́д.""", "ABAB"),
-
-        ("""И ка́ждый, несомне́нно, ве́рил,
-        В любо́вь и сча́стье без забо́т.
-        На клю́ч не запира́ли две́ри,
-        А вдру́г сосе́д еще́ зайде́т?""", "ABAB"),
-
-        ("""Созве́здья на не́бе моне́ты,
-        Мину́вших време́н медяки́.
-        Мне жа́ль уходя́щего ле́та,
-        Сижу́ у костра́, у реки́.""", "ABAB"),
-
-        ("""В нее́ устреми́лся дым си́ний,
-        Таи́тся в тума́не трава́.
-        Дым го́рек, попа́лась оси́на
-        У бе́рега мне́ на дрова́.""", "ABAB"),
-
-        ("""В голове́ возни́кли мы́сли,
-        Ка́к жемчу́жины из ро́с.
-        Фо́то… Ви́жу коромы́сло,
-        Над водо́й бето́нный мо́ст.""", "ABAB"),
-
-        ("""Твое́й весны́ изве́чна красота́:
-        Как бу́дто из-под ки́сти Рафаэ́ля
-        Возду́шность, утончё́нность ли́ний та́,
-        Что ге́нии в века́х запечатле́ли.""", "ABAB"),
-
-        ("""В одну́ сто́рону мы́ и ка́к бы не упа́сть
-        Та́кже за́ руку ввысь, как па́злы и в ма́сть
-        Проклина́й, смотри́, я та́ ли
-        Что́ не разберё́шь, во ве́ки на дета́ли""", "AABB"),
-
-        ("""Звуча́т виолонче́ль и скри́пки
-        Мело́дией далё́ких ле́т,      
-        А за око́шком су́мрак зы́бкий 
-        И фонаре́й лимо́нный све́т.""", "ABAB"),
-
-        ("""Тогда́ ещё́ душа́ пари́ла         
-        Над я́сным днё́м и сты́лой тьмо́й,
-        И, ка́жется, что всё́, что бы́ло,
-        Происходи́ло не со мно́й.""", "ABAB"),
-
-        ("""Ах, ка́к пою́т живы́е стру́ны,   
-        И, сло́вно в ска́зочной стране́,
-        Я, очаро́ванный и ю́ный,       
-        Плыву́ куда́-то на волне́.""", "ABAB"),
-
-        ("""Уста́ну бы́ть я в о́блике Пьеро́,
-        И пря́таться под ма́ской Арлеки́но!
-        И вы́ручит лишь ша́лое перо́,
-        Из кры́льев вылета́я журавли́нных...""", "ABAB"),
-
-        ("""Одино́чество - пы́ль, подо льда́ми грехо́в,
-        Пожира́ет в расще́линах сла́бые ду́ши,
-        Затира́ет следы́ от неве́рных шаго́в,
-        И на кры́шах своё́ одино́чество су́шит.""", "ABAB"),
-
-        ("""Тропи́нкой по бе́регу ре́чки
-        Пойду́ я гуля́ть под луно́й.
-        Как пти́ца, забье́тся серде́чко:
-        - Неу́жто верну́лся домо́й?!""", "ABAB"),
-
-        ("""Ну, здра́вствуй, мой фи́лин уса́тый!
-        Давно́ не пуга́л меня ты́.
-        В овра́ге приве́т всем волча́там,
-        Их по́лог накры́л темноты́.""", 'ABAB'),
-
-        ("""Оско́лок буты́лки - страх о́стрый,
-        В Сиби́ри вода́ холодна́.
-        Наве́к благода́рен я сё́страм,
-        Бога́т я, их три́ у меня́.""", "ABAB"),
-    ]
-
-
-    for true_markup, true_scheme in true_markups:
-        try:
-            poem = [z.strip() for z in true_markup.split('\n') if z.strip()]
-            alignment = aligner.align(poem, check_rhymes=True)
-            #print(alignment)
-            #print('is_poor={}'.format(aligner.detect_poor_poetry(alignment)))
-            #print('='*80)
-            #print(alignment.get_unstressed_lines())
-            #for pline in alignment.poetry_lines:
-            #    print(pline.stress_signature_str)
-            pred_markup = alignment.get_stressed_lines()
-            expected_markup = '\n'.join(poem)
-            if pred_markup.replace('ё', 'е').replace(' - ', '-') != expected_markup.replace('ё', 'е').replace(' - ', '-'):
-                print('Markup test failed')
-                print('Expected:\n{}\n\nOutput:\n{}'.format(expected_markup, pred_markup))
-                exit(0)
-
-            if alignment.rhyme_scheme != true_scheme:
-                print('Rhyming scheme mismatch')
-                print('Poem:\n{}\nExpected scheme={}\nPredicted scheme={}'.format(true_markup, true_scheme, alignment.rhyme_scheme))
-                exit(0)
-        except Exception as ex:
-            print('Exception occured on sample:\n{}\n\n{}'.format(true_markup, traceback.format_exc(())))
-            exit(0)
-
-    print('{} tests passed OK.'.format(len(true_markups)))
