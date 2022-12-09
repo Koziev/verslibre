@@ -68,7 +68,8 @@ def normalize_whitespaces(s):
                        'чьи - либо', 'чьи - то', 'чьим - либо', 'чьим - то', 'чьими - либо',
                        'чьими - то', 'чьих - либо', 'чьих - то', 'чью - либо', 'чью - то',
                        'чья - либо', 'чья - то', 'шиворот - навыворот', 'нон - стоп', 'кто - либо',
-                       'всего - то', 'много - много'
+                       'всего - то', 'много - много', 'во - первых', 'во - вторых', 'в - третьих', 'в - четвертых',
+                       'в - пятых', 'в - шестых', 'в - седьмых', 'в - восьмых', 'в - девятых', 'в - десятых'
                       ]
 
             for entry in entries:
@@ -148,11 +149,12 @@ def normalize_whitespaces(s):
 
 
 if __name__ == '__main__':
-    print(normalize_whitespaces('А всего - то в декабре,'))
 
+    print(normalize_whitespaces('Во - первых, Данилка - мужчина'))
+    print(normalize_whitespaces('Во - вторых, ты не супергерой'))
+    print(normalize_whitespaces('А всего - то в декабре,'))
     print(normalize_whitespaces('От дерева - он серый.'))
     print(normalize_whitespaces('Фейерверков много - много,'))
-
     print(normalize_whitespaces('Езжайте куда - либо в Алма - Ату'))
     print(normalize_whitespaces('Кто - либо из Нью - Йорка написал зачем - то'))
     print(normalize_whitespaces('Повстречал кто - то Бабу - Ягу'))
