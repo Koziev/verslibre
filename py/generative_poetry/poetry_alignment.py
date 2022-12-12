@@ -120,7 +120,7 @@ class MetreMappingResult(object):
         s = ''.join(map(str, signature))
         for m in re.findall(r'0{4,}', s):
             l = len(m)
-            factor = math.exp((2-l)*0.3)
+            factor = 0.1  #math.exp((2-l)*0.5)
             self.score *= factor
 
         return
@@ -457,7 +457,7 @@ class PoetryWord(object):
                 if self.is_rhyming_word:
                     variants.append(WordStressVariant(self, self.stress_pos, 1.0))
                 else:
-                    variants.append(WordStressVariant(self, self.stress_pos, 0.2))
+                    variants.append(WordStressVariant(self, self.stress_pos, 0.1))
             elif uform in ('не', 'бы', 'ли', 'же', 'ни', 'ка'):
                 # Частицы "не" и др. никогда не делаем ударной
                 variants.append(WordStressVariant(self, -1, 1.0))
@@ -1699,10 +1699,30 @@ class PoetryStressAligner(object):
                 for ivar, plinev in enumerate(vvx):
                     # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
 
+                    # Различные дефекты ритма
+                    metre_defects_score = 1.0
+                    # 11.12.2022 сдвиг одной строки на 1 позицию
+                    nprefixa = collections.Counter(pline[0].prefix for pline in plinev)
+                    if nprefixa.get(0) == 1 or nprefixa.get(1) == 1:
+                        metre_defects_score *= 0.1
+
+                    nsyllaba = collections.Counter(len(pline[1].stress_signature) for pline in plinev)
+                    if len(nsyllaba) > 2:
+                        # Есть более 2 длин строк в слогах
+                        metre_defects_score *= 0.1
+                    else:
+                        for nsyllab, num in nsyllaba.most_common():
+                            if num == 3:
+                                # В одной строке число слогов отличается от 3х других строк:
+                                #
+                                # У Лукоморья дуб зеленый,   - 9 слогов
+                                # Под ним живут русалки,     - 7 слогов
+                                # А в будках - покемоны,     - 7 слогов
+                                # Китайские пугалки.         - 7 слогов
+                                metre_defects_score *= 0.1
+
                     # Определяем рифмуемость
                     rhyme_scheme = None
-                    rhyme_score = 1.0
-
                     last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
 
                     r01 = self.check_rhyming(last_pwords[0], last_pwords[1])
@@ -1741,7 +1761,7 @@ class PoetryStressAligner(object):
                         rhyme_scheme = '----'
                         rhyme_score = 0.50
 
-                    total_score = rhyme_score * mul([pline[0].get_score() for pline in plinev])
+                    total_score = metre_defects_score * rhyme_score * mul([pline[0].get_score() for pline in plinev])
                     if total_score > best_score:
                         best_score = total_score
                         best_metre = metre_name
