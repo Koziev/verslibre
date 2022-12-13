@@ -1771,7 +1771,7 @@ class PoetryStressAligner(object):
         if best_variant is None:
             # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
             # можно было вывести в лог строки с каким-то дефолтными
-            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+            return PoetryAlignment.build_no_rhyming_result([pline.get_first_stress_variants(self) for pline in plines])
         else:
             # Возвращаем найденный вариант разметки и его оценку
             best_lines = [v[1] for v in best_variant]
