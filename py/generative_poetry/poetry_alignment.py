@@ -1419,10 +1419,20 @@ class PoetryStressAligner(object):
         elif nlines == 4:
             return self.align4(lines, check_rhymes)
         else:
-            n4 = (nlines - 1) // 4
-            if nlines == (n4*4 + 1):
-                # Считаем, что перед нами несколько блоков по 4 строки, разделенные пустой строкой
-                return self.align_n4(lines, check_rhymes)
+            if nlines in (9, 14, 19):
+                n4 = nlines // 4
+                is_x4 = True
+                j = 0
+                for i in range(1, n4):
+                    j += 4
+                    if lines[j] != '':
+                        is_x4 = False
+                        break
+                    j += 1
+
+                if is_x4:
+                    # Считаем, что перед нами несколько блоков по 4 строки, разделенных пустой строкой
+                    return self.align_n4(lines, check_rhymes)
 
             if not check_rhymes:
                 return self.align_without_rhyming(lines)
