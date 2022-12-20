@@ -100,6 +100,11 @@ class MetreMappingResult(object):
         self.cursor = 0
 
     @staticmethod
+    def build_for_empty_line():
+        r = MetreMappingResult(prefix=0)
+        return r
+
+    @staticmethod
     def build_from_source(src_mapping, new_cursor):
         new_mapping = MetreMappingResult(src_mapping.prefix)
         new_mapping.score = src_mapping.score
@@ -514,7 +519,7 @@ class PoetryWord(object):
                 variants.append(WordStressVariant(self, -1, 1.0))  # COEFF['@77']
             else:
                 if uform in ['эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей',
-                             'мою', 'твою', 'его', 'ее', 'её', 'себе', 'меня', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
+                             'мою', 'твою', 'его', 'ему', 'нему', 'ее', 'её', 'себе', 'меня', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
                              'уже', 'этом', 'тебе']:
                     # Безударный вариант для таких двусложных прилагательных
                     variants.append(WordStressVariant(self, -1, COEFF['@77_2']))
@@ -1434,10 +1439,8 @@ class PoetryStressAligner(object):
                     # Считаем, что перед нами несколько блоков по 4 строки, разделенных пустой строкой
                     return self.align_n4(lines, check_rhymes)
 
-            if not check_rhymes:
-                return self.align_without_rhyming(lines)
-
-            raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
+            return self.align_nonstandard_blocks(lines)
+            #raise ValueError("Alignment is not implemented for {}-liners! text={}".format(len(lines), '\n'.join(lines)))
 
     def align_n4(self, lines, check_rhymes):
         total_score = 1.0
@@ -1788,8 +1791,93 @@ class PoetryStressAligner(object):
             metre_mappings = [v[0] for v in best_variant]
             return PoetryAlignment(best_lines, best_score, best_metre, rhyme_scheme=best_rhyme_scheme, metre_mappings=metre_mappings)
 
-    def align_without_rhyming(self, lines):
-        result_best_lines = []
+    def align_nonstandard_block(self, lines):
+        plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+
+        # 08.11.2022 добавлена защита от взрыва числа переборов для очень плохих генераций.
+        for pline in plines:
+            if sum((pword.n_vowels>1) for pword in pline.pwords) >= 8:
+                raise ValueError('Line is too long: "{}"'.format(pline))
+
+        best_score = 0.0
+        best_metre = None
+        best_rhyme_scheme = None
+        best_variant = None
+
+        allow_stress_shift = True
+
+        # Заранее сгенерируем для каждого слова варианты спеллчека и ударения...
+        stressed_words_groups = [StressVariantsSlot.build(poetry_words=pline.pwords, aligner=self, allow_stress_shift=allow_stress_shift) for pline in plines]
+
+        # Для каждой строки перебираем варианты разметки и оставляем по ~2 варианта в каждом метре.
+        for metre_name, metre_signature in meters:
+            best_scores = dict()
+
+            # В каждой строке перебираем варианты расстановки ударений.
+            for ipline, pline in enumerate(plines):
+                best_scores[ipline] = dict()
+
+                prefix = 0
+                cursor = MetreMappingCursor(metre_signature, prefix=prefix)
+                for metre_mapping in cursor.map(stressed_words_groups[ipline], self):
+                    stressed_words = [m.word for m in metre_mapping.word_mappings]
+                    new_stress_line = LineStressVariant(pline, stressed_words, self)
+
+                    if new_stress_line.get_rhyming_tail().is_ok():
+                        tail_str = new_stress_line.get_rhyming_tail().__repr__()
+                        score = metre_mapping.get_score()
+                        if tail_str not in best_scores[ipline]:
+                            prev_score = -1e3
+                        else:
+                            prev_score = best_scores[ipline][tail_str][0].get_score()
+                        if score > prev_score:
+                            best_scores[ipline][tail_str] = (metre_mapping, new_stress_line)
+
+            # Теперь для каждой исходной строки имеем несколько вариантов расстановки ударений.
+            # Перебираем сочетания этих вариантов, проверяем рифмовку и оставляем лучший вариант для данной метра.
+            stressed_lines2 = [list() for _ in range(len(best_scores))]
+            for iline, items2 in best_scores.items():
+                stressed_lines2[iline].extend(items2.values())
+
+            # дальше все нехорошо сделано, так как число вариантов будет запредельное.
+            # надо переделать на какую-то динамическую схему подбора.
+            # пока тупо ограничим перебор первыми вариантами.
+            vvx = list(itertools.product(*stressed_lines2))[:1000]
+            for ivar, plinev in enumerate(vvx):
+                # plinev это набор из двух экземпляров кортежей (MetreMappingResult, LineStressVariant).
+
+                # Различные дефекты ритма
+                metre_defects_score = 1.0
+                # 11.12.2022 сдвиг одной строки на 1 позицию
+                nprefixa = collections.Counter(pline[0].prefix for pline in plinev)
+                if nprefixa.get(0) == 1 or nprefixa.get(1) == 1:
+                    metre_defects_score *= 0.1
+
+                # Определяем рифмуемость
+                rhyme_scheme = None
+                last_pwords = [pline[1].get_rhyming_tail() for pline in plinev]
+                # TODO ???
+
+                total_score = metre_defects_score * mul([pline[0].get_score() for pline in plinev])
+                if total_score > best_score:
+                    best_score = total_score
+                    best_metre = metre_name
+                    best_rhyme_scheme = rhyme_scheme
+                    best_variant = plinev
+
+        if best_variant is None:
+            # В этом случае вернем результат с нулевым скором и особым текстом, чтобы
+            # можно было вывести в лог строки с каким-то дефолтными
+            return None, None, None  #PoetryAlignment.build_no_rhyming_result([pline.get_first_stress_variants(self) for pline in plines])
+        else:
+            # Возвращаем найденный вариант разметки и его оценку
+            best_lines = [v[1] for v in best_variant]
+            metre_mappings = [v[0] for v in best_variant]
+            return best_lines, metre_mappings, best_metre
+
+    def align_nonstandard_blocks(self, lines):
+        stressed_lines = []
+        metre_mappings = []
         total_score = 1.0
         best_metre = None
 
@@ -1799,25 +1887,19 @@ class PoetryStressAligner(object):
         for line in lines2:
             if len(line) == 0:
                 if block_lines:
-                    # Бьем на куски длиной максимум 4 строки.
-                    while block_lines:
-                        chunk_lines = block_lines[:4]
-                        block_lines = block_lines[4:]
-                        a = self.align4(chunk_lines, check_rhymes=False)
-                        if a is None:
-                            return None
-                        else:
-                            if best_metre is None:
-                                best_metre = a.meter
-                            total_score *= a.score
-                            result_best_lines.extend(a.poetry_lines)
+                    stressed_lines_i, metre_mappings_i, metre_i = self.align_nonstandard_block(lines)
+                    best_metre = metre_i
+                    stressed_lines.extend(stressed_lines_i)
+                    metre_mappings.extend(metre_mappings_i)
+
                 # добаваляем пустую строку, разделявшую блоки.
-                result_best_lines.append(LineStressVariant.build_empty_line())
+                stressed_lines.append(LineStressVariant.build_empty_line())
+                metre_mappings.append(MetreMappingResult.build_for_empty_line())
                 block_lines = []
             else:
                 block_lines.append(line)
 
-        return PoetryAlignment(result_best_lines[:-1], total_score, best_metre, rhyme_scheme='')
+        return PoetryAlignment(stressed_lines[:-1], total_score, best_metre, rhyme_scheme='', metre_mappings=metre_mappings[:-1])
 
     def build_from_markup(self, text):
         lines = text.split('\n')
