@@ -72,7 +72,7 @@ class RugptGenerator:
 
     def generate_output(self, context, num_return_sequences=10, temperature=1.0, top_k=30, top_p=0.40,
                         penalty_alpha=0.0, typical_p=1.0, repetition_penalty=1.0, no_repeat_ngram_size=0,
-                        positive_words=None, negative_words=None, max_len=256):
+                        positive_words=None, negative_words=None, max_len=384):
         global logits_booster
 
         prompt_text = "<s> " + context + ' $'
