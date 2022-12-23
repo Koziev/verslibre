@@ -91,7 +91,7 @@ class TextDataset(Dataset):
             self.examples = []
 
             # 16-11-2021 порежем на куски по границам, отмеченным токеном <|startoftext|>
-            # 23-11-2021 читаем из файлы строками, при встрече строки <|startoftext|> или по достижении размера в 1Мб берем накопившийся текст и нарезаем его на блоки.
+            # 23-11-2021 читаем из файла строками, при встрече строки <|startoftext|> или по достижении размера в 1Мб берем накопившийся текст и нарезаем его на блоки.
             total_size = os.path.getsize(file_path) // 1_000_000
             with tqdm(total=total_size, desc='Tokenization', unit='Mb') as pbar, open(file_path, encoding="utf-8") as f:
                 chunk_lines = []
@@ -134,7 +134,7 @@ class TextDataset(Dataset):
 
 
 class TextIterableDataset(IterableDataset):
-    """Потокое чтение кусков из текстового файла, без загрузки полностью в память."""
+    """Потоковое чтение кусков из текстового файла, без загрузки полностью в память."""
 
     def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
         assert os.path.isfile(file_path)
@@ -180,6 +180,12 @@ class TextIterableDataset(IterableDataset):
                                 pbar.update(delta)
                                 prev_consumed_amount = cur_consumed_amount
 
+                                # НАЧАЛО ОТЛАДКИ
+                                #if cur_consumed_amount > 20:
+                                #    print('DEBUG@185 BREAK')
+                                #    break
+                                # КОНЕЦ ОТЛАДКИ
+
                             tokenized_text = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(chunk_text))
                             # Теперь режем кусок на блоки заданного размера
                             while tokenized_text:
@@ -212,10 +218,11 @@ class TextIterableDataset(IterableDataset):
     def __iter__(self):
         # 16-11-2021 порежем на куски по границам, отмеченным токеном <|startoftext|>
         # 23-11-2021 читаем из файлы строками, при встрече строки <|startoftext|> или по достижении размера в 1Мб берем накопившийся текст и нарезаем его на блоки.
+        # 23-12-2022 Тут осталось только чтение подготовленных сэмплов из кэша, который создан в конструкторе
 
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:  # single-process data loading, return the full iterator
-            logger.info('Reading %d samples from "%s"', self.num_samples, self.cached_features_file)
+            logger.info('Streaming %d samples from "%s"', self.num_samples, self.cached_features_file)
             with open(self.cached_features_file, 'rb') as rdr:
                 for _ in range(self.num_samples):
                     sample = pickle.load(rdr)
@@ -465,7 +472,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
+        logger.info("Using DistributedDataParallel over %d GPU's", args.n_gpu)
         model = torch.nn.DataParallel(model)
+        #model = torch.nn.parallel.DistributedDataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
@@ -559,11 +568,11 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-                            print('DEBUG@558 EVAL step={} {}={}'.format(global_step, key, value))
+                            #print('DEBUG@558 EVAL step={} {}={}'.format(global_step, key, value))
 
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
-                    print('DEBUG@ step={} loss={}'.format(global_step, (tr_loss - logging_loss) / args.logging_steps))
+                    #print('DEBUG@ step={} loss={}'.format(global_step, (tr_loss - logging_loss) / args.logging_steps))
                     logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -625,8 +634,8 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate)
 
     # multi-gpu evaluate
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    #if args.n_gpu > 1:
+    #    model = torch.nn.DataParallel(model)
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
@@ -660,6 +669,10 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             writer.write("%s = %s\n" % (key, str(result[key])))
 
     return result
+
+
+def calculate_parameters(ann):
+    return sum(p.numel() for p in ann.parameters() if p.requires_grad)
 
 
 def main():
@@ -941,6 +954,7 @@ def main():
     else:
         logger.info("Training new model from scratch")
         model = AutoModelWithLMHead.from_config(config)
+        logger.info("Number of parameters = {}".format(calculate_parameters(model)))
 
     model.to(args.device)
 
