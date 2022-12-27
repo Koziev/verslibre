@@ -75,8 +75,12 @@ class RugptGenerator:
                         positive_words=None, negative_words=None, max_len=384):
         global logits_booster
 
-        prompt_text = "<s> " + context + ' $'
-        #prompt_text = context + ' $'
+        # 27.12.2022 Если затравка пустая, то не будем добавлять токен-сепаратор $
+        if context:
+            prompt_text = "<s> " + context + ' $'
+        else:
+            prompt_text = "<s>"
+
         stop_token = "</s>"
 
         encoded_prompt = self.tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
@@ -154,16 +158,15 @@ class RugptGenerator:
 
 
 class LongPoemGeneratorCore2(object):
-    def __init__(self, gpt_name):
-        self.gpt_name = gpt_name
+    def __init__(self):
         self.poem_generator = None
         self.parser = None
         self.accents = None
         self.aligner = None
 
-    def load(self, models_dir, data_dir, tmp_dir):
+    def load(self, gpt_model_path, models_dir, data_dir, tmp_dir):
         self.poem_generator = RugptGenerator()
-        self.poem_generator.load(os.path.join(models_dir, self.gpt_name))
+        self.poem_generator.load(gpt_model_path)
 
         self.parser = UdpipeParser()
         self.parser.load(models_dir)
@@ -177,7 +180,10 @@ class LongPoemGeneratorCore2(object):
     def generate_poems(self, topic, genre=None, emotion_token=None, num_return_sequences=10, temperature=1.0, top_p=0.5, top_k=30,
                        score_threshold=0.20, penalty_alpha=0.0, typical_p=1.0, repetition_penalty=1.0, no_repeat_ngram_size=0):
         try:
-            if genre:
+            if not genre and not topic:
+                # Свободная генерация: ни жанр, ни тема не заданы
+                seed = ''
+            elif genre:
                 seed = arabize(break_to_syllables(self.parser, self.accents, genre + ' , ' + topic))
             elif emotion_token is not None:
                 seed = arabize(break_to_syllables(self.parser, self.accents, topic))
