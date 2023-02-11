@@ -2053,7 +2053,8 @@ class PoetryStressAligner(object):
                 if (form1, form2) in self.accentuator.rhymed_words:
                     continue
 
-                if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л м шь т тся у те й ю ь лись лась лось лся тся ться я шись в'.split(' ')):
+                #if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л м шь т тся у те й ю ь лись лась лось лся тся ться я шись в'.split(' ')):
+                if any((form1.endswith(e) and form2.endswith(e)) for e in 'ли ла ло л тся те лись лась лось лся тся ться шись'.split(' ')):
                     return True
 
                 if form1.endswith(form2):
