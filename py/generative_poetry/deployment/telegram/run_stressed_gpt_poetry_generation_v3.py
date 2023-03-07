@@ -21,24 +21,29 @@ End-2-end генерация рифмованного четверостишья
 27.10.2022 Если генерация в модели long poems ничего не дала, запускаем генерацию в старой модели 4-строчников.
 11.11.2022 Большая чистка: убираем все жанры генерации, кроме лирики, меняем стартовый экран. Новое ядро генератора.
 21.11.2022 Переход на модель GPT 355, датасет файнтюна без жанров вообще
+01.03.2023 Введена трансляция пользовательских затравок
+07.03.2023 Добавлен вывод расширенной статистики по посетителям и оценкам по команде /stat
 """
-
+import collections
+import datetime
 import os
 import io
 import logging
 import argparse
 import traceback
 import getpass
+import itertools
+import re
 
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
 import tensorflow as tf
+import torch
 
 from generative_poetry.init_logging import init_logging
 from generative_poetry.poetry_seeds import SeedGenerator
-
 from generative_poetry.long_poem_generator2 import LongPoemGeneratorCore2
 
 
@@ -58,6 +63,7 @@ def render_error_html(error_text):
     return s
 
 
+temperature = 0.90
 top_p = 1.00
 top_k = 0
 typical_p = 0.6
@@ -85,7 +91,7 @@ FORMAT__HUM = "Юмор и сатира"
 FORMAT__FOLK = "Частушки"
 
 
-def start(update, context) -> None:
+def on_start(update, context) -> None:
     user_id = get_user_id(update)
     logging.debug('Entering START callback with user_id=%s', user_id)
 
@@ -93,8 +99,7 @@ def start(update, context) -> None:
     seed_generator.restart_user_session(user_id)
 
     intro_text = "Привет, {}!\n\n".format(update.message.from_user.full_name) + \
-    "Я - бот для генерации стихов (версия от 21.11.2022).\n" + \
-    "Для обратной связи используйте kelijah@yandex.ru или https://github.com/Koziev/verslibre.\n\n" + \
+    "Я - бот для генерации стихов (версия от 05.03.2023).\n" + \
     "Теперь вводите тему - какое-нибудь существительное или сочетание прилагательного и существительного, например <i>задорная улыбка</i>, " + \
     "и я сочиню стишок с этими словами.\n\n" + \
     "Можете также задавать полную первую строку, например <i>У бурных чувств неистовый конец</i>, я попробую продолжить от нее.\n\n" + \
@@ -114,12 +119,55 @@ def start(update, context) -> None:
     logging.debug('Leaving START callback with user_id=%s', user_id)
 
 
+date2visitors = collections.defaultdict(list)
+date2likes = collections.Counter()
+date2dislikes = collections.Counter()
+date2errors = collections.Counter()
+date2prompts = collections.Counter()
+
+
+def register_visitor(user_id):
+    date2visitors[datetime.date.today()].append(user_id)
+
+
+def on_stat(update, context) -> None:
+    logging.info('Entering on_stat')
+    # Вывод статистики по боту
+    stat_lines = []
+
+    stat_lines.append(f'Время аптайма, дней: {len(date2visitors)}')
+
+    stat_lines.append(f'Всего затравок с момента старта: {sum(date2prompts.values())}')
+
+    uniq_users = set(itertools.chain(*date2visitors.values()))
+    stat_lines.append(f'Всего уникальных посетителей с момента старта: {len(uniq_users)}')
+
+    stat_lines.append(f'Кол-во затравок сегодня: {date2prompts[datetime.date.today()]}')
+
+    uniq_today = len(set(date2visitors[datetime.date.today()]))
+    stat_lines.append(f'Кол-во уникальных посетителей сегодня: {uniq_today}')
+
+    total_likes = sum(date2likes.values())
+    stat_lines.append(f'Всего лайков с момента старта: {total_likes}')
+
+    total_dislikes = sum(date2dislikes.values())
+    stat_lines.append(f'Всего дизлайков с момента старта: {total_dislikes}')
+
+    stat_lines.append(f'Кол-во лайков сегодня: {date2likes[datetime.date.today()]}')
+    stat_lines.append(f'Кол-во дизлайков сегодня: {date2dislikes[datetime.date.today()]}')
+
+    stat_lines.append(f'Кол-во ошибок сегодня: {date2errors[datetime.date.today()]}')
+
+    context.bot.send_message(chat_id=update.message.chat_id, text='\n\n'.join(stat_lines))
+
+
 def dbg_actions(update, context):
     pass # TODO ...
     return
 
 
 def echo_on_error(context, update, user_id):
+    date2errors[datetime.date.today()] += 1
     keyboard = [seed_generator.generate_seeds(user_id, domain='лирика')]
     reply_markup = ReplyKeyboardMarkup(keyboard,
                                        one_time_keyboard=True,
@@ -135,6 +183,8 @@ def echo_on_error(context, update, user_id):
 def echo(update, context):
     try:
         user_id = get_user_id(update)
+        register_visitor(user_id)
+
         format = 'лирика'
 
         if update.message.text == NEW:
@@ -151,8 +201,10 @@ def echo(update, context):
 
         if update.message.text == LIKE:
             if user_id not in last_user_poem:
-                echo_on_error(context, update, user_id, format)
+                echo_on_error(context, update, user_id)
                 return
+
+            date2likes[datetime.date.today()] += 1
 
             # Какой текст полайкали:
             poem = last_user_poem[user_id].replace('\n', ' | ')
@@ -173,8 +225,10 @@ def echo(update, context):
 
         if update.message.text == DISLIKE:
             if user_id not in last_user_poem:
-                echo_on_error(context, update, user_id, format)
+                echo_on_error(context, update, user_id)
                 return
+
+            date2dislikes[datetime.date.today()] += 1
 
             # Какой текст не понравился:
             poem = last_user_poem[user_id].replace('\n', ' | ')
@@ -222,16 +276,20 @@ def echo(update, context):
             return
 
         seed = update.message.text
-        logging.info('Will generate a poem using seed="%s" for user="%s" id=%s in chat=%s', seed, update.message.from_user.name, user_id, str(update.message.chat_id))
+        logging.info('Start generating the poems using seed="%s" for user="%s" id=%s in chat=%s', seed, update.message.from_user.name, user_id, str(update.message.chat_id))
+        date2prompts[datetime.date.today()] += 1
 
         # 22.10.2022 Если генерация ничего не дала (например, все сгенерированные варианты не прошли фильтры),
         # то увеличиваем температуру и повторяем.
-        temperature = 1.0
+        temperature = 0.9
         max_temperature = 1.6
+
         while temperature <= max_temperature:
-            ranked_poems = long_poetry_generator.generate_poems(topic=seed,
-                                                                temperature=temperature, top_p=top_p, top_k=top_k, typical_p=typical_p,
-                                                                num_return_sequences=5)
+            ranked_poems = long_poetry_generator.generate_poems(topic=seed, temperature=temperature, top_p=top_p,
+                                                          top_k=top_k, typical_p=typical_p, num_return_sequences=10)
+
+            ranked_poems = sorted(ranked_poems, key=lambda z: -z[1])[:10]
+
             poems2 = [('\n'.join(lines), score) for lines, score in ranked_poems]
 
             if len(poems2) > 0:
@@ -284,10 +342,26 @@ def echo(update, context):
         echo_on_error(context, update, user_id)
 
 
+
+def ngrams(s, n):
+    return set(''.join(z) for z in zip(*[s[i:] for i in range(n)]))
+
+
+def jaccard(s1, s2, shingle_len):
+    shingles1 = ngrams(s1.lower(), shingle_len)
+    shingles2 = ngrams(s2.lower(), shingle_len)
+    return float(len(shingles1 & shingles2))/float(len(shingles1 | shingles2) + 1e-6)
+
+
+def tokenize(s):
+    return re.split(r'[.,!?\- ;:]', s)
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Verslibre & haiku generator v.16')
+    parser = argparse.ArgumentParser(description='Verslibre & haiku generator v.18')
     parser.add_argument('--token', type=str, default='', help='Telegram token')
     parser.add_argument('--mode', type=str, default='console', choices='console telegram'.split(), help='Frontend selector')
+    parser.add_argument('--poetry_model', type=str, default='../../tmp/verses_generator_medium.chitalnya', help='Poetry generative model name path')
     parser.add_argument('--tmp_dir', default='../../tmp', type=str)
     parser.add_argument('--data_dir', default='../../data', type=str)
     parser.add_argument('--models_dir', default='../../models', type=str)
@@ -309,10 +383,17 @@ if __name__ == '__main__':
     # Генератор саджестов
     seed_generator = SeedGenerator(models_dir)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logging.info('device=%s', str(device))
+
+    # Транслятор затравок
+    #prompt_builder = PromptBuilder(device)
+    #prompt_builder.load_model('inkoziev/sbert_synonymy')
+    #prompt_builder.load_prompts(os.path.join(data_dir, 'poetry', 'prompts', 'new_prompts.txt'))
+
     # Генератор рифмованных стихов
-    logging.info('Loading the long poetry generation models from "%s"...', models_dir)
-    long_poetry_generator = LongPoemGeneratorCore2('stressed_long_poetry_generator_medium')
-    long_poetry_generator.load(models_dir, data_dir, tmp_dir)
+    long_poetry_generator = LongPoemGeneratorCore2(device)
+    long_poetry_generator.load(gpt_model_path=args.poetry_model, models_dir=models_dir, data_dir=data_dir, tmp_dir=tmp_dir)
 
     if args.mode == 'telegram':
         # Телеграм-версия генератора
@@ -328,8 +409,11 @@ if __name__ == '__main__':
         updater = Updater(token=telegram_token)
         dispatcher = updater.dispatcher
 
-        start_handler = CommandHandler('start', start)
+        start_handler = CommandHandler('start', on_start)
         dispatcher.add_handler(start_handler)
+
+        stat_handler = CommandHandler('stat', on_stat)
+        dispatcher.add_handler(stat_handler)
 
         echo_handler = MessageHandler(Filters.text & ~Filters.command, echo)
         dispatcher.add_handler(echo_handler)
@@ -350,14 +434,20 @@ if __name__ == '__main__':
         print('Вводите затравку для генерации\n')
 
         while True:
-            topic = input(':> ').strip()
+            suggest = input(':> ').strip()
 
-            ranked_poems = long_poetry_generator.generate_poems(topic=topic,
-                                                                temperature=1.0, top_p=top_p, top_k=top_k, typical_p=typical_p,
-                                                                num_return_sequences=5)
+            logging.info('Generation for suggest "%s"...', suggest)
+            ranked_poems = long_poetry_generator.generate_poems(topic=suggest, temperature=temperature, top_p=top_p,
+                                                      top_k=top_k, typical_p=typical_p, num_return_sequences=10)
 
-            for poem, score in ranked_poems:
+            ranked_poems = sorted(ranked_poems, key=lambda z: -z[1])
+
+            # TODO - сделать ранжировку
+
+            for poem, score in ranked_poems[:10]:
                 print('\nscore={}'.format(score))
+                print('-'*80)
                 for line in poem:
                     print(line)
-                print('='*50)
+                print()
+            print('='*50)
