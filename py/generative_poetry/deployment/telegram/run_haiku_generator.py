@@ -23,8 +23,8 @@ import getpass
 
 import numpy as np
 import torch
-from transformers import VisionEncoderDecoderModel, ViTFeatureExtractor, AutoTokenizer
-from transformers import AutoModelForSeq2SeqLM
+#from transformers import VisionEncoderDecoderModel, ViTFeatureExtractor, AutoTokenizer
+#from transformers import AutoModelForSeq2SeqLM
 from PIL import Image
 
 import telegram
@@ -32,11 +32,11 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, Update
 
 from generative_poetry.udpipe_parser import UdpipeParser
-from rugpt_generator import RugptGenerator
+from generative_poetry.rugpt_generator import RugptGenerator
 from antiplagiat import Antiplagiat
-from poetry_seeds import SeedGenerator
-from init_logging import init_logging
-from is_good_haiku import is_good_haiku
+from generative_poetry.poetry_seeds import SeedGenerator
+from generative_poetry.init_logging import init_logging
+from generative_poetry.is_good_haiku import is_good_haiku
 from generative_poetry.thesaurus import Thesaurus
 
 
