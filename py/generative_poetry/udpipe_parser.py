@@ -25,6 +25,9 @@ class UDPipeToken:
                 return t.split('=')[1]
         return ''
 
+    def feats(self):
+        return dict((s.split('=')) for s in self.tags)
+
 
 def get_attr(token, tag_name):
     if tag_name in token.feats:
@@ -52,7 +55,12 @@ class Parsing(object):
         return list(self.tokens).__iter__()
 
     def __getitem__(self, i):
-        return self.tokens[int(i)-1]
+        if isinstance(i, int):
+            return self.tokens[i]
+        elif isinstance(i, slice):
+            return self.tokens[i]
+        else:
+            return self.tokens[int(i)-1]
 
 
 class UdpipeParser:
@@ -104,7 +112,7 @@ class UdpipeParser:
                         if is_soul_dative:
                             parsing.append(UDPipeToken(token, upos='NOUN', tags=['Case=Dat']))
                             continue
-                    if utoken in ['чтоб']:
+                    elif utoken in ['чтоб']:
                         # Исправляем ошибки разметки некоторых слов в UDPipe.Syntagrus
                         parsing.append(UDPipeToken(token, upos='SCONJ', tags=[]))
                     elif utoken in ['средь']:
@@ -115,6 +123,15 @@ class UdpipeParser:
                         # си́дючи в вэ ка́
                         #          ^^
                         token.upos = 'NOUN'
+                        parsing.append(UDPipeToken(token))
+                    elif utoken == 'белей' and token.upos == 'NOUN':
+                        # Все белей и белей седина
+                        parsing.append(UDPipeToken(token, upos='ADJ', tags=['Degree=Cmp']))
+                    elif utoken == 'мимо' and token.upos == 'ADJ':
+                        # 27.12.2022
+                        # А эти парни все мимо и мимо.
+                        #                 ^^^^   ^^^^
+                        token.upos = 'ADV'
                         parsing.append(UDPipeToken(token))
                     else:
                         parsing.append(UDPipeToken(token))
