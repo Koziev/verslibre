@@ -13,7 +13,7 @@ RUN apt-get install -y liblzma-dev
 RUN pip install --upgrade pip
 RUN pip install --upgrade setuptools
 
-RUN pip install torch absl-py transformers coloredlogs python-telegram-bot pyconll ufal.udpipe pillow networkx
+RUN pip install torch absl-py transformers coloredlogs python-telegram-bot==13.10 pyconll ufal.udpipe pillow networkx
 
 RUN apt-get clean
 
@@ -28,13 +28,14 @@ COPY ./tmp/thesaurus.pkl ./
 
 WORKDIR /text_generator/py/generative_poetry
 COPY ./py/generative_poetry/rugpt_generator.py ./
-COPY ./py/generative_poetry/run_haiku_generator.py ./
 COPY ./py/generative_poetry/poetry_seeds.py ./
 COPY ./py/generative_poetry/init_logging.py ./
 COPY ./py/generative_poetry/is_good_haiku.py ./
 COPY ./py/generative_poetry/udpipe_parser.py ./
 COPY ./py/generative_poetry/thesaurus.py ./
 
+WORKDIR /text_generator/py/generative_poetry/deployment/telegram
+COPY ./py/generative_poetry/deployment/telegram/run_haiku_generator.py ./
 
 WORKDIR /text_generator/scripts/
 COPY ./scripts/haiku_tg.sh ./
@@ -45,6 +46,7 @@ COPY ./models/rugpt_haiku_generator/* ./
 WORKDIR /text_generator/models
 COPY ./models/seeds.pkl ./
 COPY ./models/udpipe_syntagrus.model ./
+COPY ./models/word2lemma.pkl ./
 
 WORKDIR /text_generator/py/generative_poetry
 CMD "/text_generator/scripts/haiku_tg.sh"
