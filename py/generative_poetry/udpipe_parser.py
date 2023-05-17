@@ -62,6 +62,12 @@ class Parsing(object):
         else:
             return self.tokens[int(i)-1]
 
+    def get_root(self):
+        for t in self.tokens:
+            if t.deprel == 'root':
+                return t
+        return None
+
 
 class UdpipeParser:
     def __init__(self):
@@ -111,7 +117,9 @@ class UdpipeParser:
 
                         if is_soul_dative:
                             parsing.append(UDPipeToken(token, upos='NOUN', tags=['Case=Dat']))
-                            continue
+                        else:
+                            parsing.append(UDPipeToken(token))
+
                     elif utoken in ['чтоб']:
                         # Исправляем ошибки разметки некоторых слов в UDPipe.Syntagrus
                         parsing.append(UDPipeToken(token, upos='SCONJ', tags=[]))
