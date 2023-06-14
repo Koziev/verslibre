@@ -398,20 +398,7 @@ class PoetryWord(object):
             variants.append(WordStressVariant(self, 2, 1.0))
         elif uform in aligner.accentuator.ambiguous_accents2:
             # Вариативное ударение в рамках одной грамматической формы пОнял-понЯл
-            for accent in aligner.accentuator.ambiguous_accents2[uform]:
-                stress_pos = -1
-                n_vowels = 0
-                for c in accent:
-                    if c.lower() in 'уеыаоэёяию':
-                        n_vowels += 1
-
-                    if c in 'АЕЁИОУЫЭЮЯ':
-                        stress_pos = n_vowels
-                        break
-
-                if stress_pos == -1:
-                    raise ValueError('Could not find stressed position in word "{}" in ambiguous_accents2'.format(accent))
-
+            for stress_pos in aligner.accentuator.ambiguous_accents2[uform]:
                 variants.append(WordStressVariant(self, stress_pos, 1.0))
         elif len(self.alternative_stress_positions) > 1:
             # 07.04.2022 из-за ошибки pos-tagger'а не удалось обработать омограф.
@@ -983,9 +970,7 @@ class PoetryLine(object):
 
                     if word in accentuator.ambiguous_accents2:
                         ax = accentuator.ambiguous_accents2[word]
-                        for a1 in ax:
-                            i = locate_Astress_pos(a1)
-                            alt_stress_pos.append(i)
+                        alt_stress_pos.extend(ax)
                         stress_pos = alt_stress_pos[0]
                     elif word in accentuator.ambiguous_accents:
                         # Слово является омографом. Возьмем в работу все варианты ударения.
@@ -1019,17 +1004,8 @@ class PoetryLine(object):
                         # основное, самое частотное ударение), и не бросаем исключение, так как дальше матчер все равно
                         # будет перебирать все варианты по списку.
                         if word in accentuator.ambiguous_accents2:
-                            ax = accentuator.ambiguous_accents2[word]
-                            a1 = ax[0]
-                            n_vowels = 0
-                            for c in a1:
-                                if c.lower() in 'уеыаоэёяию':
-                                    n_vowels += 1
-
-                                if c in 'АЕЁИОУЫЭЮЯ':
-                                    stress_pos = n_vowels
-                                    break
-
+                            px = accentuator.ambiguous_accents2[word]
+                            stress_pos = px[0]
                         if stress_pos == -1:
                             # Мы можем оказаться тут из-за ошибки частеречной разметки. Проверим,
                             # входит ли слово в список омографов.

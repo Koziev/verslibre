@@ -7,23 +7,24 @@ import os
 
 from poetry.phonetic import Accents
 from generative_poetry.udpipe_parser import UdpipeParser
-from generative_poetry.stanza_parser import StanzaParser
+#from generative_poetry.stanza_parser import StanzaParser
 
 from generative_poetry.poetry_alignment import PoetryStressAligner
 
 
 if __name__ == '__main__':
-    data_dir = '../../data'
-    tmp_dir = '../../tmp'
-    models_dir = '../../models'
+    proj_dir = os.path.expanduser('~/polygon/text_generator')
+    tmp_dir = os.path.join(proj_dir, 'tmp')
+    data_dir = os.path.join(proj_dir, 'data')
+    models_dir = os.path.join(proj_dir, 'models')
 
     udpipe = UdpipeParser()
     udpipe.load(models_dir)
     #udpipe = StanzaParser()
 
     accents = Accents()
-    accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
-    accents.after_loading(stress_model_dir=os.path.join(tmp_dir, 'stress_model'))
+    accents.load_pickle(os.path.join(proj_dir, 'models', 'accentuator', 'accents.pkl'))
+    accents.after_loading(stress_model_dir=os.path.join(proj_dir, 'models', 'accentuator'))
 
     aligner = PoetryStressAligner(udpipe, accents, os.path.join(data_dir, 'poetry', 'dict'))
 
@@ -186,6 +187,8 @@ if __name__ == '__main__':
             print('ERROR: score={} is too high for the bad poetry sample:\n\n{}'.format(alignment.score, '\n'.join(poem)))
 
     true_markups = [
+        ("""В душе́ мы все́ немно́жечко поэ́ты.""", ""),
+
         ("""По́ лбу ло́жкой тре́сну я́""", ""),
         ("""ло́жкой тре́сну я́ по лбу́""", ""),
         ("""Я́ иду́ по ле́су""", ''),
@@ -356,7 +359,6 @@ if __name__ == '__main__':
         ("""Мой а́д не для двои́х.""", ""),
         ("""К лицу́ мне бо́льше все́х идё́т молча́нье.""", ""),
         ("""Кляну́сь! Ваш взгля́д мне сла́ще да́же то́рта.""", ""),
-        ("""В душе́ мы все́ немно́жечко поэ́ты.""", ""),
         ("""О кра́ткости тракта́т я го́д писа́ла""", ""),
         ("""Вранье́ всех СМИ́ так и́скренне правди́во.""", ""),
         ("""Поро́й есть у судьбы́ свои́ заба́вы.""", ""),
