@@ -8,6 +8,7 @@
 02.08.2022 Исправление опечатки - твердый знак вместо мягкого "пъянки"
 11.08.2022 Добавлена продуктивная приставка "супер-"
 12.08.2022 Добавлена продуктивная приставка "лже-"
+24.01.2023 Добавлен фильтр для отсева бракованных лексем в качестве ключей в слове ударений
 """
 
 import json
@@ -20,15 +21,32 @@ import codecs
 import operator
 import logging
 import re
+import huggingface_hub
 
-#from nltk.stem.snowball import RussianStemmer
-
-#from russ.stress.model import StressModel
-from transcriptor_models.stress_model.stress_model import StressModel
+from transcriptor_models.torch_stress_model.accentuator import AccentuatorWrapper
 
 import rusyllab
 
-#from poetry.corpus_analyser import CorpusWords
+
+def is_good_stress_key(word):
+    if re.search(r'[a-z0-9·]', word, flags=re.I) is not None:
+        #print('DEBUG@37: ', word)
+        return False
+    if len(word) < 2:
+        #print('DEBUG@40: ', word)
+        return False
+
+    m1 = re.search(r'([^абвгдеёжзийклмнопрстуфхцчшщъыьэюя\-̀́])', word, flags=re.I)
+    if m1 is not None:
+        # В слове не должно быть символов, кроме кириллицы, дефиса и значков ударения.
+        #print('DEBUG@45: word={} char={}'.format(word, m1.group(1)))
+        return False
+
+    if any((c.lower() not in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя̀́') for c in [word[0], word[-1]]):
+        # первый и последний символ слова обязаны быть кириллицей или значком ударения, а не пунктуаторами или типа того
+        #print('DEBUG@50: ', word)
+        return False
+    return True
 
 
 class Accents:
@@ -79,6 +97,15 @@ class Accents:
         # Раскроем, чтобы было явное перечисление всех падежей.
         d2 = dict()
         for entry_name, entry_data in d.items():
+            if any((c in entry_name[0]) for c in '-.~'):
+                continue
+
+            if 'ӂ' in entry_name:
+                entry_name = entry_name.replace('ӂ', 'ж')
+
+            if entry_name.startswith('нэйро'):
+                continue
+
             entry_data2 = dict()
             for form, tagsets in entry_data.items():
                 tagsets2 = []
@@ -106,7 +133,26 @@ class Accents:
         logging.info('%d items in ambiguous_accents', len(self.ambiguous_accents))
 
         # Некоторые слова допускают разное ударение для одной грамматической формы: пОнял-понЯл
-        self.ambiguous_accents2 = yaml.safe_load(io.open(os.path.join(data_dir, 'ambiguous_accents_2.yaml'), 'r', encoding='utf-8').read())
+        # 14.06.2023 сразу конвертируем человекочитабельные записи в позиции ударения.
+        self.ambiguous_accents2 = dict()
+        for word, accents in yaml.safe_load(io.open(os.path.join(data_dir, 'ambiguous_accents_2.yaml'), 'r', encoding='utf-8').read()).items():
+            stress_posx = []
+            for accent in accents:
+                stress_pos = -1
+                n_vowels = 0
+                for c in accent:
+                    if c.lower() in 'уеыаоэёяию':
+                        n_vowels += 1
+
+                    if c in 'АЕЁИОУЫЭЮЯ':
+                        stress_pos = n_vowels
+                        break
+
+                if stress_pos == -1:
+                    raise ValueError('Could not find stressed position in word "{}" in ambiguous_accents2'.format(accent))
+
+                stress_posx.append(stress_pos)
+            self.ambiguous_accents2[word] = stress_posx
 
         self.word_accents_dict = dict()
 
@@ -118,14 +164,15 @@ class Accents:
                     tx = line.split('\t')
                     if len(tx) == 2:
                         word, accent = tx[0], tx[1]
-                        n_vowels = 0
-                        for c in accent:
-                            if c.lower() in 'уеыаоэёяию':
-                                n_vowels += 1
-                                if c.isupper():
-                                    stress = n_vowels
-                                    self.word_accents_dict[word.lower()] = stress
-                                    break
+                        if is_good_stress_key(word):
+                            n_vowels = 0
+                            for c in accent:
+                                if c.lower() in 'уеыаоэёяию':
+                                    n_vowels += 1
+                                    if c.isupper():
+                                        stress = n_vowels
+                                        self.word_accents_dict[word.lower()] = stress
+                                        break
 
         if True:
             path2 = os.path.join(data_dir, 'accents.txt')
@@ -137,17 +184,18 @@ class Accents:
                         forms = tx[1].split(',')
                         for form in forms:
                             word = self.sanitize_word(form.replace('\'', '').replace('`', ''))
-                            if all_words is None or word in all_words:
-                                if '\'' in form:
-                                    accent_pos = form.index('\'')
-                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)
-                                    if word not in self.word_accents_dict:
-                                        self.word_accents_dict[word] = nb_vowels_before
-                                elif 'ё' in form:
-                                    accent_pos = form.index('ё')
-                                    nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)+1
-                                    if word not in self.word_accents_dict:
-                                        self.word_accents_dict[word] = nb_vowels_before
+                            if is_good_stress_key(word):
+                                if all_words is None or word in all_words:
+                                    if '\'' in form:
+                                        accent_pos = form.index('\'')
+                                        nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)
+                                        if word not in self.word_accents_dict:
+                                            self.word_accents_dict[word] = nb_vowels_before
+                                    elif 'ё' in form:
+                                        accent_pos = form.index('ё')
+                                        nb_vowels_before = self.get_vowel_count(form[:accent_pos], abbrevs=False)+1
+                                        if word not in self.word_accents_dict:
+                                            self.word_accents_dict[word] = nb_vowels_before
 
         if True:
             stress_char = '́'
@@ -157,7 +205,12 @@ class Accents:
             with codecs.open(p3, 'r', 'utf-8') as rdr:
                 for iline, line in enumerate(rdr):
                     word = line.strip()
-                    if '-' not in word:
+
+                    # 17.05.2023 заменяем символ "'" на юникодный модификатор ударения
+                    if "'" in word and '\u0301' not in word:
+                        word = word.replace("'", '\u0301')
+
+                    if is_good_stress_key(word):
                         nword = word.replace(stress_char, '').replace('\'', '').replace('ѝ', 'и').replace('ѐ', 'е').replace(stress2_char, '').lower()
                         if len(nword) > 2:
                             if stress_char in word:
@@ -182,7 +235,7 @@ class Accents:
             logging.info('Loading stress information from "%s"', path)
             d = json.loads(open(path).read())
             for word, a in d.items():
-                if '-' not in word:
+                if is_good_stress_key(word):
                     nword = self.sanitize_word(word)
                     if nword not in self.word_accents_dict:
                         self.word_accents_dict[nword] = a
@@ -217,12 +270,6 @@ class Accents:
 
         logging.info('%d items in word_accents_dict', len(self.word_accents_dict))
 
-        if False:
-            # Делаем отладочный листинг загруженных ударений
-            with codecs.open('../tmp/accents.txt', 'w', 'utf-8') as wrt:
-                for word, accent in sorted(six.iteritems(self.word_accents_dict), key=operator.itemgetter(0)):
-                    wrt.write(u'{}\t{}\n'.format(word, accent))
-
     def save_pickle(self, path):
         with open(path, 'wb') as f:
             pickle.dump(self.ambiguous_accents, f)
@@ -241,11 +288,17 @@ class Accents:
             self.rhymed_words = pickle.load(f)
             self.rhyming_dict = pickle.load(f)
 
-    def after_loading(self, stress_model_dir):
-        #self.stemmer = RussianStemmer()
-        #self.stress_model = StressModel.load()
-        self.stress_model = StressModel(stress_model_dir)
+    def after_loading(self, model_name_or_path):
+        self.stress_model = AccentuatorWrapper(model_name_or_path)
         self.predicted_accents = dict()
+
+    def load_pretrained(self, model_name_or_path):
+        if model_name_or_path == 'inkoziev/accentuator':
+            dict_filepath = huggingface_hub.hf_hub_download(repo_id=model_name_or_path, filename='accents.pkl')
+        else:
+            dict_filepath = os.path.join(model_name_or_path, 'accents.pkl')
+        self.load_pickle(dict_filepath)
+        self.after_loading(model_name_or_path)
 
     def conson(self, c1):
         # Оглушение согласной
@@ -390,6 +443,19 @@ class Accents:
 
     def is_oov(self, word):
         return 'ё' not in word and word not in self.word_accents_dict and word not in self.ambiguous_accents and word not in self.ambiguous_accents2
+
+    def get_ambiguous_stresses1(self, word):
+        stress_positions = []
+        if word in self.ambiguous_accents:
+            for accented, tagsets in self.ambiguous_accents[word].items():
+                n_vowels = 0
+                for c in accented:
+                    if c.lower() in 'уеыаоэёяию':
+                        n_vowels += 1
+                        if c.isupper():
+                            stress_positions.append(n_vowels)
+
+        return stress_positions
 
     def predict_ambiguous_accent(self, word, ud_tags):
         best_accented = None
@@ -1400,7 +1466,7 @@ def rhymed_fuzzy2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, uns
             return True
 
         # МО^Я - РУЖЬ^Я
-        if c1[-2:] == c2[-2:] and c1[-2] == '^' and c1[-1] in 'еёяю' and c2[-1] in 'еёюя' \
+        if len(c1)>=3 and len(c2)>=3 and c1[-2:] == c2[-2:] and c1[-2] == '^' and c1[-1] in 'еёяю' and c2[-1] in 'еёюя' \
             and c1[-3] in phonetic_vowels+'ьъ' and c2[-3] in phonetic_vowels+'ьъ':
             return True
 
@@ -1471,8 +1537,15 @@ def extract_ekeys(word, stress):
 
 
 if __name__ == '__main__':
-    data_folder = '../../data/poetry/dict'
-    tmp_dir = '../../tmp'
+    proj_dir = os.path.expanduser('~/polygon/text_generator')
+    data_folder = os.path.join(proj_dir, 'data/poetry/dict')
+    tmp_dir = os.path.join(proj_dir, 'tmp')
+
+    r = is_good_stress_key('hоп')
+    assert r is False
+
+    r = is_good_stress_key('вѝдеокассе́тна')
+    assert r is False
 
     # Проверим валидность содержимого файла с неоднозначными ударениями.
     ambiguous_accents2 = yaml.safe_load(io.open(os.path.join(data_folder, 'ambiguous_accents_2.yaml'), 'r', encoding='utf-8').read())
@@ -1616,14 +1689,13 @@ if __name__ == '__main__':
     if True:
         # Делаем бинарный файл с данными для работы акцентуатора.
         accents.load(data_folder, None)
-        accents.save_pickle(os.path.join(tmp_dir, 'accents.pkl'))
+        accents.save_pickle(os.path.join(proj_dir, 'models', 'accentuator', 'accents.pkl'))
 
     # =======================================
     # ТЕСТЫ СОХРАНЕННОГО СЛОВАРЯ
     # =======================================
 
-    accents.load_pickle(os.path.join(tmp_dir, 'accents.pkl'))
-    accents.after_loading(stress_model_dir='../../tmp/stress_model')
+    accents.load_pretrained(os.path.join(proj_dir, 'models', 'accentuator'))
 
     for word in ['ль', 'ж', 'к', 'м', 'б']:
         p = accents.get_accent(word)
@@ -1661,6 +1733,9 @@ if __name__ == '__main__':
     # =========================================================
     # Поверка точной рифмовки слов без неоднозначностей
     # =========================================================
+
+    r = rhymed(accents, 'страданья', [], 'баранья', [])
+    assert(r is True)
 
     r = rhymed(accents, 'никакого', ['ADJ'], 'большого', ['ADJ'])
     assert(r is True)
@@ -1780,9 +1855,6 @@ if __name__ == '__main__':
     r = rhymed(accents, 'на', [], 'губа', [])
     assert(r is False)
 
-    r = rhymed(accents, 'лозанья', [], 'баранья', [])
-    assert(r is True)
-
     r = rhymed(accents, 'аттракцион', [], 'моцион', [])
     assert(r is True)
 
@@ -1878,6 +1950,10 @@ if __name__ == '__main__':
     # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
 
+    # трёхочковый - волочковой
+    r = rhymed_fuzzy(accents, 'трёхочковый', None, [], 'волочковой', None, [])
+    assert(r is True)
+
     r = rhymed_fuzzy(accents, 'победа', None, [], 'приеду', None, [])
     assert(r is True)
 
@@ -1894,10 +1970,6 @@ if __name__ == '__main__':
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'вложены', None, [], 'положено', None, [])
-    assert(r is True)
-
-    # трёхочковый - волочковой
-    r = rhymed_fuzzy(accents, 'трёхочковый', None, [], 'волочковой', None, [])
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'сиськи', None, [], 'виски', None, 'Case=Nom|Number=Sing'.split('|'))
