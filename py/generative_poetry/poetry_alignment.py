@@ -29,7 +29,7 @@ import jellyfish
 import re
 from typing import List, Set, Dict, Tuple, Optional
 
-from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy2
+from poetry.phonetic import Accents, rhymed2, rhymed_fuzzy2, render_xword
 from generative_poetry.metre_classifier import get_syllables
 from generative_poetry.whitespace_normalization import normalize_whitespaces
 
@@ -342,6 +342,7 @@ class PoetryWord(object):
         self.form = form
         self.upos = upos
         self.tags = tags
+        self.tags2 = dict(s.split('=') for s in tags)
         self.stress_pos = stress_pos
         if alternative_stress_positions:
             self.alternative_stress_positions = alternative_stress_positions  # все варианты положения ударения, первый вариант - условной основной
@@ -364,6 +365,9 @@ class PoetryWord(object):
                 else:
                     self.trailing_consonants += 1
         self.n_vowels = n_vowels
+
+    def get_attr(self, tag_name):
+        return self.tags2.get(tag_name, '')
 
     def __repr__(self):
         output = []
@@ -944,9 +948,9 @@ class PoetryLine(object):
 
     @staticmethod
     def build(text, udpipe_parser, accentuator):
-        pline = PoetryLine()
-        pline.text = text
-        pline.pwords = []
+        poetry_line = PoetryLine()
+        poetry_line.text = text
+        poetry_line.pwords = []
 
         text2 = text
 
@@ -993,7 +997,7 @@ class PoetryLine(object):
                             stress_pos = accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
 
                     pword = PoetryWord(ud_token.lemma, ud_token.form, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
-                    pline.pwords.append(pword)
+                    poetry_line.pwords.append(pword)
             else:
                 for ud_token in parsing:
                     word = ud_token.form.lower()
@@ -1022,10 +1026,16 @@ class PoetryLine(object):
 
                     form2 = accentuator.yoficate(ud_token.form)
                     pword = PoetryWord(ud_token.lemma, form2, ud_token.upos, ud_token.tags, stress_pos, alt_stress_pos)
-                    pline.pwords.append(pword)
 
-        pline.locate_rhyming_word()
-        return pline
+                    # НАЧАЛО ОТЛАДКИ
+                    if not isinstance(poetry_line, PoetryLine):
+                        print('DEBUG@1027')
+                    # КОНЕЦ ОТЛАДКИ
+
+                    poetry_line.pwords.append(pword)
+
+        poetry_line.locate_rhyming_word()
+        return poetry_line
 
     @staticmethod
     def build_from_markup(markup_line, parser):
@@ -1230,63 +1240,29 @@ class CollocationStress(object):
 
         return res
 
-    #def hit2(self, word1, word2):
-    #    return self.words[0] == word1 and self.words[1] == word2
 
-    #def hit3(self, word1, word2, word3):
-    #    return self.words[0] == word1 and self.words[1] == word2 and self.words[2] == word3
+class RapAlignment(object):
+    def __init__(self):
+        self.rhymes = []
+        self.defects = []
+        self.denominator = 0
 
-    # def produce_stressed_line(self, src_line, aligner):
-    #     nw1 = len(src_line.stressed_words) - 1
-    #     nw2 = len(src_line.stressed_words) - 2
-    #     for i1, word1 in enumerate(src_line.stressed_words):
-    #         if word1.poetry_word.form.lower() == self.words[0]:
-    #             if i1 < nw1:
-    #                 word2 = src_line.stressed_words[i1+1]
-    #                 if word2.poetry_word.form.lower() == self.words[1]:
-    #                     new_stressed_words = list(src_line.stressed_words[:i1])
-    #
-    #                     if len(self.words) == 2:
-    #                         if self.stressed_word_index == 0:
-    #                             # первое слово становится ударным, второе - безударное
-    #                             new_stressed_words.append(word1.build_stressed(self.stress_pos))
-    #                             new_stressed_words.append(word2.build_unstressed())
-    #                         else:
-    #                             # первое слово становится безударным, второе - ударное
-    #                             new_stressed_words.append(word1.build_unstressed())
-    #                             new_stressed_words.append(word2.build_stressed(self.stress_pos))
-    #
-    #                         # остаток слов справа от второго слова
-    #                         new_stressed_words.extend(src_line.stressed_words[i1+2:])
-    #                         new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
-    #                         return new_variant
-    #                     elif len(self.words) == 3:
-    #                         if i1 < nw2:
-    #                             word3 = src_line.stressed_words[i1 + 2]
-    #                             if word3.poetry_word.form.lower() == self.words[2]:
-    #
-    #                                 if self.stressed_word_index == 0:
-    #                                     # первое слово становится ударным, второе и третье - безударные
-    #                                     new_stressed_words.append(word1.build_stressed(self.stress_pos))
-    #                                     new_stressed_words.append(word2.build_unstressed())
-    #                                     new_stressed_words.append(word3.build_unstressed())
-    #                                 elif self.stressed_word_index == 1:
-    #                                     # первое и третье слова становятся безударными, второе - ударное
-    #                                     new_stressed_words.append(word1.build_unstressed())
-    #                                     new_stressed_words.append(word2.build_stressed(self.stress_pos))
-    #                                     new_stressed_words.append(word3.build_unstressed())
-    #                                 else:
-    #                                     # первое и второе слова становятся безударными, третье - ударное
-    #                                     new_stressed_words.append(word1.build_unstressed())
-    #                                     new_stressed_words.append(word2.build_unstressed())
-    #                                     new_stressed_words.append(word3.build_stressed(self.stress_pos))
-    #
-    #                                 # остаток слов справа от третьего слова
-    #                                 new_stressed_words.extend(src_line.stressed_words[i1 + 3:])
-    #                                 new_variant = LineStressVariant(src_line.poetry_line, new_stressed_words, aligner)
-    #                                 return new_variant
-    #
-    #     raise ValueError('Inconsistent call of CollocationStress::produce_stressed_line')
+    def get_total_score(self):
+        return len(self.rhymes) / (self.denominator+1.0e-6) - sum(weight for descr, weight in self.defects)
+
+    def __repr__(self):
+        return f'hits={self.rhymes} denominator={self.denominator}'
+
+
+def ngrams(s, n):
+    return set(u''.join(z) for z in zip(*[s[i:] for i in range(n)]))
+
+
+def jaccard(s1, s2, shingle_len):
+    shingles1 = ngrams(s1.lower(), shingle_len)
+    shingles2 = ngrams(s2.lower(), shingle_len)
+    return float(len(shingles1 & shingles2))/float(len(shingles1 | shingles2) + 1e-6)
+
 
 
 class PoetryStressAligner(object):
@@ -1511,8 +1487,9 @@ class PoetryStressAligner(object):
         if res.rhyme_scheme == 'AABA':
             return res
         else:
-            plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
-            return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+            #plines = [PoetryLine.build(line, self.udpipe, self.accentuator) for line in lines]
+            #return PoetryAlignment.build_no_rhyming_result([pline.get_stress_variants(self)[0] for pline in plines])
+            return None
 
     def align1(self, lines):
         """Разметка однострочника."""
@@ -1933,6 +1910,9 @@ class PoetryStressAligner(object):
                 if word1 == word2:
                     return True
 
+        return self.detect_repeating_in_line(alignment, strict)
+
+    def detect_repeating_in_line(self, alignment, strict=False):
         # Иногда генеративная модель выдает повторы существительных типа "любовь и любовь" в одной строке.
         # Такие генерации выглядят криво.
         # Данный метод детектирует повтор леммы существительного в строке.
@@ -1979,6 +1959,24 @@ class PoetryStressAligner(object):
                 if v1 in forms and v2 in forms:
                     return True
 
+            # 14.08.2023 попадаются повторы из личной формы глагола и деепричастия:
+            # Когда лишь любишь ты любя.
+            #            ^^^^^^^^^^^^^^
+            #print('DEBUG@1992')
+            vlemmas = set()
+            conv_lemmas = set()
+            for w in pline.poetry_line.pwords:
+                if w.upos == 'VERB':
+                    #print('DEBUG@1997 w.form=', w.form,  w.lemma)
+                    if w.get_attr('VerbForm') == 'Conv':
+                        conv_lemmas.add(w.lemma)
+                    else:
+                        vlemmas.add(w.lemma)
+
+            if any((v in conv_lemmas) for v in vlemmas):
+                #print('DEBUG@2004')
+                return True
+
         return False
 
     def detect_poor_poetry(self, alignment):
@@ -1987,11 +1985,14 @@ class PoetryStressAligner(object):
         last_words = [pline.get_rhyming_tail().stressed_word.form.lower() for pline in alignment.poetry_lines]
 
         # Проверяем банальный повтор слова
+        # 18.08.2023 проверяем случаи "легко-нелегко"
         for i1, word1 in enumerate(last_words[:-1]):
             for word2 in last_words[i1+1:]:
                 form1 = word1.lower().replace('ё', 'е')
                 form2 = word2.lower().replace('ё', 'е')
                 if form1 == form2:
+                    return True
+                if form1 == 'не'+form2 or 'не'+form1 == form2:
                     return True
 
         # Если два глагольных окончания, причем одно является хвостом другого - это бедная рифма:
@@ -2069,6 +2070,20 @@ class PoetryStressAligner(object):
 
         return False
 
+    def detect_rhyme_repeatance(self, alignment):
+        """Обнаруживаем повтор слова в рифмовке"""
+        last_words = [pline.get_rhyming_tail().stressed_word.form.lower() for pline in alignment.poetry_lines]
+
+        # Проверяем банальный повтор слова
+        for i1, word1 in enumerate(last_words[:-1]):
+            for word2 in last_words[i1+1:]:
+                form1 = word1.lower().replace('ё', 'е')
+                form2 = word2.lower().replace('ё', 'е')
+                if form1 == form2:
+                    return True
+
+        return False
+
     def analyze_defects(self, alignment):
         defects = Defects()
 
@@ -2114,3 +2129,126 @@ class PoetryStressAligner(object):
                 defects.add_defect(Defect(0.5, description='@1884'))
 
         return defects
+
+    def markup_rap_line(self, line):
+        opt_words = ['лишь', 'вроде', 'если', 'чтобы', 'когда', 'просто', 'мимо', 'даже', 'всё', 'хотя', 'едва', 'нет',
+                     'эти', 'эту', 'это', 'мои', 'твои', 'моих', 'твоих', 'моим', 'твоим', 'моей', 'твоей',
+                     'мою', 'твою', 'его', 'ее', 'её', 'себе', 'тебя', 'свою', 'свои', 'своим', 'они', 'она',
+                     'уже', 'есть', 'раз', 'быть']
+        res_tokens = []
+        parsings = self.udpipe.parse_text(line)
+        if parsings is None:
+            raise RuntimeError()
+
+        for parsing in parsings:
+            for ud_token in parsing:
+                stress_pos = 0
+                word = ud_token.form.lower()
+                nvowels = sum((c in 'уеыаоэёяию') for c in word)
+
+                if ud_token.upos in ('PRON', 'ADV', 'DET') and nvowels == 1:
+                    # Односложные наречия, местоимения и т.д.
+                    is_optional_stress = True
+                elif ud_token.upos in ('PUNCT', 'ADP', 'PART', 'SCONJ', 'CCONJ', 'INTJ'):
+                    is_optional_stress = True
+                elif word in opt_words:
+                    is_optional_stress = True
+                else:
+                    is_optional_stress = False
+
+                if not is_optional_stress:
+                    stress_pos = self.accentuator.get_accent(word, ud_tags=ud_token.tags + [ud_token.upos])
+
+                cx = []
+                vowel_counter = 0
+                for c in ud_token.form:
+                    cx.append(c)
+                    if c.lower() in 'уеыаоэёяию':
+                        vowel_counter += 1
+                        if vowel_counter == stress_pos:
+                            cx.append('\u0301')
+                token2 = ''.join(cx)
+                res_tokens.append({'form': ud_token.form, 'upos': ud_token.upos, 'tags': ud_token.tags, 'stress_pos': stress_pos, 'rendition': token2})
+
+        return res_tokens
+
+    def get_rhyming_tail(self, rap_tokens):
+        while rap_tokens:
+            if re.search(r'\w', rap_tokens[-1]['form']) is not None:
+                return rap_tokens[-1]
+            rap_tokens = rap_tokens[:-1]
+        return None
+
+    def align_rap(self, rap_lines):
+        markups = [self.markup_rap_line(line) for line in rap_lines]
+        res = RapAlignment()
+
+        total_word_vocab = collections.Counter()
+        total_word_count = 0
+
+        # Рифмовка последних слов соседних строк или через одну строку.
+        for iline1, line1 in enumerate(markups):
+            if len(line1) > 0:
+                # Поищем дефекты генерации по этой строке.
+
+                line_words = [t['form'].lower().replace('ё', 'е') for t in line1 if re.match(r'^\w+$', t['form']) is not None]
+                total_word_vocab.update(line_words)
+                total_word_count += len(line_words)
+
+                # 1) Если строка состоит из повторов одного слова (не считая пунктуации):
+                # Котик котик,
+                # ^^^^^^^^^^^^
+                word_counter = collections.Counter(line_words)
+                if sum(word_counter.values()) > 1 and len(word_counter.items()) == 1:
+                    res.defects.append(('строка = повтор одного слова "{}"'.format(word_counter.most_common()[0][0]), 1))
+
+                last_token1 = self.get_rhyming_tail(line1)
+                for line2 in markups[iline1+1: iline1+3]:
+                    # TODO учесть безударные слова в конце...
+                    last_token2 = self.get_rhyming_tail(line2)
+
+                    if last_token1 and last_token2:
+                        if last_token1['stress_pos'] > 0 and last_token2['stress_pos'] > 0:
+                            if last_token1['form'].lower().replace('ё', 'е') != last_token2['form'].lower().replace('ё', 'е'):
+                                r = rhymed_fuzzy2(self.accentuator,
+                                                  last_token1['form'], last_token1['stress_pos'], [last_token1['upos']]+last_token1['tags'], '', '',
+                                                  last_token2['form'], last_token2['stress_pos'], [last_token2['upos']]+last_token2['tags'], '', '')
+
+                                if not r:
+                                    # Попробуем менее четкое сравнение, только для рэпа, типа грусть-вернусь
+                                    xword1, clausula1 = render_xword(self.accentuator, last_token1['form'], last_token1['stress_pos'], [last_token1['upos']]+last_token1['tags'], '', '',)
+                                    xword2, clausula2 = render_xword(self.accentuator, last_token2['form'], last_token2['stress_pos'], [last_token2['upos']]+last_token2['tags'], '', '')
+
+                                    stressed_vowel1 = re.search(r'\^([аеёиоуыэюя])', xword1)
+                                    stressed_vowel1 = stressed_vowel1.group(1) if stressed_vowel1 else '<1>'
+
+                                    stressed_vowel2 = re.search(r'\^([аеёиоуыэюя])', xword2)
+                                    stressed_vowel2 = stressed_vowel2.group(1) if stressed_vowel2 else '<2>'
+
+                                    if stressed_vowel1 == stressed_vowel2:
+                                        d = jellyfish.levenshtein_distance(clausula1, clausula2)
+                                        if d < 2:
+                                            r = True
+
+                                if r:
+                                    res.rhymes.append((last_token1['form'], last_token1['rendition'], last_token2['form'], last_token2['rendition']))
+
+                res.denominator += 1  # ведем учет проверок, чтобы тексты разной длины привести к общему знаменателю
+
+        # Ищем дегенеративный инференс:
+        #
+        # У котика, у котика,
+        # Розовый животик.
+        # У котика, у котика,
+        # Маленький животик.
+        #
+        # У котика, у котика,
+        # Маленький животик.
+        # У котика, у котика,
+        # Маленький животик.
+        if len(total_word_vocab) < total_word_count//2:
+            res.defects.append(('дегенерация@2247', 100.0))
+
+
+        return res
+
