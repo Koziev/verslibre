@@ -1099,6 +1099,8 @@ def rhymed2(accentuator, word1, stress1, ud_tags1, unstressed_prefix1, unstresse
 fuzzy_ending_pairs = [
     (r'[бвгджзклмнпрстфхцчшщл]ь\^ер', r'\^е'),  # модельер - ателье
 
+    (r'л\^э', r'л\^эт'),  # нуле - амулет
+
     (r'\^уж[уыэа]', r'\^уж[уыэа]'),  # стужу - лужи
 
     (r'\^утам', r'\^уты'),  # парашютам - тьфу ты
@@ -1226,6 +1228,17 @@ def render_xword(accentuator, word, stress_pos, ud_tags, unstressed_prefix, unst
                     phonems.extend('ова')
                     break
                 elif ending[1:] in ('ться', 'тся'):
+                    if c == 'е':
+                        c = 'э'
+                    elif c == 'я':
+                        c = 'а'
+                    elif c == 'ё':
+                        c = 'о'
+                    elif c == 'ю':
+                        c = 'у'
+                    elif c == 'и':
+                        c = 'ы'
+
                     phonems.append(c)
                     phonems.append('ц')
                     phonems.extend('а')
@@ -1950,8 +1963,17 @@ if __name__ == '__main__':
     # ПРОВЕРКА НЕЧЕТКОЙ РИФМОВКИ
     # TODO - переделать на цикл по списку пар.
 
+    #r = rhymed_fuzzy(accents, 'улыбается', None, [], 'раскрасавица', None, [])
+    #assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'птицы', None, [], 'разбиться', None, [])
+    assert(r is True)
+
     # трёхочковый - волочковой
     r = rhymed_fuzzy(accents, 'трёхочковый', None, [], 'волочковой', None, [])
+    assert(r is True)
+
+    r = rhymed_fuzzy(accents, 'нуле', None, [], 'амулет', None, [])
     assert(r is True)
 
     r = rhymed_fuzzy(accents, 'победа', None, [], 'приеду', None, [])
